@@ -249,7 +249,7 @@ void setup() {
 
 
   //if you get here you have connected to the WiFi
-  Serial1.println("WiFi: connected");
+  Serial1.println("\r\nWiFi: Connected");
 
   Serial1.printf("  %15s %s\n", "IP:",      WiFi.localIP().toString().c_str());
   Serial1.printf("  %15s %s\n", "Subnet:",  WiFi.subnetMask().toString().c_str());
@@ -311,6 +311,7 @@ void setup() {
 
   MDNS.addService("http", "tcp", 80);
 
+  Serial1.println("\r\nSystem: Information");
   Serial1.printf("%20s: ", "getBootMode");
   Serial1.println(ESP.getBootMode());
   Serial1.printf("%20s: ", "getSdkVersion");
@@ -331,7 +332,9 @@ void setup() {
   Serial1.println(ESP.getFreeHeap());
 
   // Green light on
-  digitalWrite(H801_LED_PIN_G, false); 
+  digitalWrite(H801_LED_PIN_G, false);
+
+  Serial1.println("\r\nSystem: Running");
 }
 
 
@@ -470,8 +473,8 @@ void httpHandlePOST() {
     return;
   }
 
-  Serial1.print("POST Input: ");
-  Serial1.println(httpServer.arg("plain"));
+  //Serial1.print("POST Input: ");
+  //Serial1.println(httpServer.arg("plain"));
 
   // Parse the json
   JsonObject& json = jsonBuffer.parseObject(httpServer.arg("plain"));
@@ -539,6 +542,7 @@ void httpHandleGET() {
   if (bGotArgs) {
     Serial1.print("GET Parsed: ");
     json.printTo(Serial1);
+    Serial1.println();
 
     // Update light from json string
     if (jsonToLight(json))

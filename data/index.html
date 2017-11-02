@@ -5,7 +5,6 @@
   <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
   <meta http-equiv="X-UA-Compatible" content="IE=edge">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0"> 
-
 <style>
 body {
   color: #333333;
@@ -16,7 +15,7 @@ body {
 form {
   padding-top: 50px;
   margin: auto; 
-  max-width: 350px;
+  max-width: 400px;
 }
 div.container {
   background-color: #eaeaea;
@@ -33,19 +32,19 @@ span.result {
   display: inline-block;
   font-size: 14px;
   font-weight: bold;
+  white-space: pre;
 }
 label {
-  min-width: 70px;
+  min-width: 40px;
   text-align: right;
 }
 span.result {
-  min-width: 45px;
+  min-width: 40px;
   text-align: left;
 }
 input[type=button]:hover {
   background-color: #3b6989;
 }
-
 input[type=button] {
   background-color: #5b8dad;
   border: 0;
@@ -104,14 +103,31 @@ input[type=range]::-ms-thumb {
   width: 3px;
 }
 
-
+#R_val {
+  background: linear-gradient(to right, #000, #f00);
+}
+#G_val {
+  background: linear-gradient(to right, #000, #0f0);
+}
+#B_val {
+  background: linear-gradient(to right, #000, #00f);
+}
+#W1_val {
+  background: linear-gradient(to right, #000, #fff);
+}
+#W2_val {
+  background: linear-gradient(to right, #000, #fff);
+}
+#duration_val {
+  background-color: #aaa;
+}
 </style>
 </head>
 
 <body>
 <script>
 function doPost() {
-  var data = {"fade": 200};
+  var data = {};
   ['R', 'G', 'B', 'W1', 'W2', 'duration'].forEach(function(item) {
     data[item] = document.getElementById(item + '_val').value;
   })
@@ -119,13 +135,8 @@ function doPost() {
   var request = new XMLHttpRequest();
   request.open('POST', '/status', true);
   request.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded; charset=UTF-8');
-  
-  request.error = function() {
-  }
-
-  request.onload = function() {
-  };
-
+  request.error = function() { }
+  request.onload = function() { };
   request.send(JSON.stringify(data));
 }
 
@@ -145,70 +156,83 @@ function doRefresh() {
       if (dom)
         dom.innerHTML = ''+data[prop];
       dom = document.getElementById(prop + '_val');
+      // Don't update active slider
       if (dom && dom != document.activeElement)
         dom.value = ''+data[prop];
     });
   };
-
   request.send();
 }
-
-setTimeout(doRefresh, 500);
 
 function sliderChange(item) {
   var domValue = document.getElementById(item + '_val');
   var domTxt   = document.getElementById(item + '_txt');
-  if (domValue && domTxt)
+  
+  if (!domTxt)
+    ; // Ignore
+  else if (!domValue)
+    domTxt.innerHTML = "N/A ";
+  else if (item == 'duration')
+    domTxt.innerHTML = parseInt(domValue.value, 10) / 1000;
+  else
     domTxt.innerHTML = domValue.value;
 }
+
 </script>
 
-<form id="H801" method="POST" action="javascript:doPost()">
+<form id="H801">
   <div class="container">
     <div>
       <label>R:</label>
-      <input type="range" name="R" id="R_val"  min="0" value="0" max="255" step="1" style="background: linear-gradient(to right, #000, #f00);" onchange="sliderChange('R');">
+      <input type="range" id="R_val"  min="0" value="0" max="255" step="1" oninput="sliderChange('R');" onchange="sliderChange('R');">
       <span class="result" id="R_txt">0</span>
     </div>
     <div>
       <label>G:</label>
-      <input type="range" name="R" id="G_val"  min="0" value="0" max="255" step="1" style="background: linear-gradient(to right, #000, #0f0);" onchange="sliderChange('G');">
+      <input type="range" id="G_val"  min="0" value="0" max="255" step="1" oninput="sliderChange('G');" onchange="sliderChange('G');">
       <span class="result" id="G_txt">0</span>
     </div>
     <div>
       <label>B:</label>
-      <input type="range" name="R" id="B_val"  min="0" value="0" max="255" step="1" style="background: linear-gradient(to right, #000, #00f);" onchange="sliderChange('B');">
+      <input type="range" id="B_val"  min="0" value="0" max="255" step="1" oninput="sliderChange('B');"  onchange="sliderChange('B');">
       <span class="result" id="B_txt">0</span>
     </div>
     <div>
       <label>W1:</label>
-      <input type="range" name="R" id="W1_val"  min="0" value="0" max="255" step="1" style="background: linear-gradient(to right, #000, #fff);" onchange="sliderChange('W1');">
+      <input type="range" id="W1_val"  min="0" value="0" max="255" step="1" oninput="sliderChange('W1');" onchange="sliderChange('W1');">
       <span class="result" id="W1_txt">0</span>
     </div>
     <div>
       <label>W2:</label>
-      <input type="range" name="R" id="W2_val"  min="0" value="0" max="255" step="1" style="background: linear-gradient(to right, #000, #fff);" onchange="sliderChange('W2');">
+      <input type="range" id="W2_val"  min="0" value="0" max="255" step="1" oninput="sliderChange('W2');" onchange="sliderChange('W2');">
       <span class="result" id="W2_txt">0</span>
     </div>
+    <br>
     <div>
-      <label>Duration:</label>
-      <input type="number" min="0" max="10000000" step="100" name="fade" id="duration_val">
-      <span class="result">ms</span>
+      <label>Fade:</label>
+      <input type="range" id="duration_val" min="0" value="0" step="100" max="60000" step="1" oninput="sliderChange('duration');" onchange="sliderChange('duration');">
+      <span class="result"><span id="duration_txt">0</span>s</span>
     </div>
     <br>
+    <br>
     <div class="buttons">
-      <input type="button" onclick="doRefresh()" class="btnRefresh" value="Refresh">
-      <input type="button" onclick="doPost()"    class="btnPost" value="Post">
+      <input type="button" onclick="doRefresh()" class="btnRefresh" value="Get Current">
+      <input type="button" onclick="doPost()"    class="btnPost" value="Set Values">
     </div>
   </div>
 </form>
 
 <script>
+  // Update numbers
   sliderChange('R');
   sliderChange('G');
   sliderChange('B');
   sliderChange('W1');
   sliderChange('W2');
+  sliderChange('duration');
+
+  // Fetch current values
+  setTimeout(doRefresh, 500);
 </script>
 
 </body>
