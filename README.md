@@ -13,7 +13,7 @@ ESP8266 based LED controller using MQTT and/or HTTP
 Available properties to set
 
 | Property | Info | Range |
-|---|---|
+|---|---|---|
 | `R` | Red channel | 0-255 |
 | `G` | Green channel | 0-255 |
 | `B` | Blue channel | 0-255 |
