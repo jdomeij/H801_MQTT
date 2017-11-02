@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>H801</title>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0"> 
+
+<style>
+body {
+  color: #333333;
+  background-color: #416a98;
+  font-family:Helvetica, Arial, Sans-Serif;
+  font-size:12px;
+}
+form {
+  padding-top: 50px;
+  margin: auto; 
+  max-width: 350px;
+}
+div.container {
+  background-color: #eaeaea;
+  box-shadow: 0 0 20px 0 rgba(0, 0, 0, 0.2), 0 5px 5px 0 rgba(0, 0, 0, 0.24);
+  padding: 15px;
+}
+div.container > div {
+  display: flex;
+  height: 35px;
+  line-height:35px;
+}
+label,
+span.result {
+  display: inline-block;
+  font-size: 14px;
+  font-weight: bold;
+}
+label {
+  min-width: 70px;
+  text-align: right;
+}
+span.result {
+  min-width: 45px;
+  text-align: left;
+}
+input[type=button]:hover {
+  background-color: #3b6989;
+}
+
+input[type=button] {
+  background-color: #5b8dad;
+  border: 0;
+  color: #ffffff;
+  flex-grow: 1;
+  margin: 2px 10px;
+  padding: 8px 10px;
+}
+
+input[type=range],
+input[type=number] {
+  flex-grow: 1;
+  margin: 2px 10px;
+}
+
+input[type=range] {
+  -webkit-appearance: none;
+  margin: 8px 10px;
+  width: 100%;
+}
+input[type=range]:focus {
+  outline: none;
+}
+input[type=range]::-moz-range-track {
+  background: transparent;
+  cursor: pointer;
+  height: 15.3px;
+  width: 100%;
+}
+input[type=range]::-moz-range-thumb {
+  background: #000000;
+  border: 0;
+  cursor: pointer;
+  height: 31px;
+  width: 3px;
+}
+input[type=range]::-ms-track {
+  background: transparent;
+  border-color: transparent;
+  color: transparent;
+  cursor: pointer;
+  height: 15.3px;
+  width: 100%;
+}
+input[type=range]::-ms-fill-lower {
+  border-radius: 2.6px;
+}
+input[type=range]::-ms-fill-upper {
+  border-radius: 2.6px;
+}
+input[type=range]::-ms-thumb {
+  border-radius: 3px;
+  cursor: pointer;
+  height: 15.3px;
+  height: 31px;
+  width: 3px;
+}
+
+
+</style>
+</head>
+
+<body>
+<script>
+function doPost() {
+  var data = {"fade": 200};
+  ['R', 'G', 'B', 'W1', 'W2', 'duration'].forEach(function(item) {
+    data[item] = document.getElementById(item + '_val').value;
+  })
+
+  var request = new XMLHttpRequest();
+  request.open('POST', '/status', true);
+  request.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded; charset=UTF-8');
+  
+  request.error = function() {
+  }
+
+  request.onload = function() {
+  };
+
+  request.send(JSON.stringify(data));
+}
+
+function doRefresh() {
+  var request = new XMLHttpRequest(); 
+  request.open('GET', '/status', true);
+  request.error = function() {
+  }
+
+  request.onload = function() {
+    if (this.status < 200 && this.status >= 400) {
+      return;
+    }
+    var data = JSON.parse(this.response);
+    Object.keys(data).forEach(function(prop) {
+      var dom = document.getElementById(prop + '_txt');
+      if (dom)
+        dom.innerHTML = ''+data[prop];
+      dom = document.getElementById(prop + '_val');
+      if (dom && dom != document.activeElement)
+        dom.value = ''+data[prop];
+    });
+  };
+
+  request.send();
+}
+
+setTimeout(doRefresh, 500);
+
+function sliderChange(item) {
+  var domValue = document.getElementById(item + '_val');
+  var domTxt   = document.getElementById(item + '_txt');
+  if (domValue && domTxt)
+    domTxt.innerHTML = domValue.value;
+}
+</script>
+
+<form id="H801" method="POST" action="javascript:doPost()">
+  <div class="container">
+    <div>
+      <label>R:</label>
+      <input type="range" name="R" id="R_val"  min="0" value="0" max="255" step="1" style="background: linear-gradient(to right, #000, #f00);" onchange="sliderChange('R');">
+      <span class="result" id="R_txt">0</span>
+    </div>
+    <div>
+      <label>G:</label>
+      <input type="range" name="R" id="G_val"  min="0" value="0" max="255" step="1" style="background: linear-gradient(to right, #000, #0f0);" onchange="sliderChange('G');">
+      <span class="result" id="G_txt">0</span>
+    </div>
+    <div>
+      <label>B:</label>
+      <input type="range" name="R" id="B_val"  min="0" value="0" max="255" step="1" style="background: linear-gradient(to right, #000, #00f);" onchange="sliderChange('B');">
+      <span class="result" id="B_txt">0</span>
+    </div>
+    <div>
+      <label>W1:</label>
+      <input type="range" name="R" id="W1_val"  min="0" value="0" max="255" step="1" style="background: linear-gradient(to right, #000, #fff);" onchange="sliderChange('W1');">
+      <span class="result" id="W1_txt">0</span>
+    </div>
+    <div>
+      <label>W2:</label>
+      <input type="range" name="R" id="W2_val"  min="0" value="0" max="255" step="1" style="background: linear-gradient(to right, #000, #fff);" onchange="sliderChange('W2');">
+      <span class="result" id="W2_txt">0</span>
+    </div>
+    <div>
+      <label>Duration:</label>
+      <input type="number" min="0" max="10000000" step="100" name="fade" id="duration_val">
+      <span class="result">ms</span>
+    </div>
+    <br>
+    <div class="buttons">
+      <input type="button" onclick="doRefresh()" class="btnRefresh" value="Refresh">
+      <input type="button" onclick="doPost()"    class="btnPost" value="Post">
+    </div>
+  </div>
+</form>
+
+<script>
+  sliderChange('R');
+  sliderChange('G');
+  sliderChange('B');
+  sliderChange('W1');
+  sliderChange('W2');
+</script>
+
+</body>
