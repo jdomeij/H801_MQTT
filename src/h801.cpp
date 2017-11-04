@@ -27,10 +27,12 @@
   #define countof(x) sizeof(COUNTOF_REQUIRES_ARRAY_ARGUMENT(x))
 #endif
 
-
+typedef const char* (*H801_CallbackSetConfig)(JsonObject&);
+typedef const char* (*H801_CallbackGetConfig)(void);
 
 #include "h801_led.h"
 #include "h801_mqtt.h"
+#include "h801_http.h"
 
 
 // Define PWM pins
@@ -44,32 +46,26 @@
 #define H801_LED_PIN_G  1
 #define H801_LED_PIN_R  5
 
+// Input pins
+#define H801_GPIO_PIN0  0
+
 // Configuration file
 #define H801_CONFIG_FILE "/config.json"
 
 // Number of steps to to fade each second
 #define H801_DURATION_FADE_STEPS 10
 
-// Forward declarations
-void saveConfigCallback();
 
-void httpHandleRoot();
-void httpHandleGET();
-void httpHandlePOST();
-
-char *mqttHandleSet(char*);
-char *mqttHandleGet(void);
+const char *callbackHandleSet(JsonObject&);
+const char *callbackHandleGet(void);
 
 
 // Global variables
-bool isFading = false;
-bool H801StatusOn = false;
+static bool s_isFading = false;
 
-
-WiFiClient wifiClient;
-H801_MQTT mqttClient(wifiClient, mqttHandleSet, mqttHandleGet);
-ESP8266WebServer httpServer(80);
-ESP8266HTTPUpdateServer httpUpdater;
+static WiFiClient s_wifiClient;
+static H801_MQTT s_mqttClient(s_wifiClient, callbackHandleSet, callbackHandleGet);
+static H801_HTTP s_httpServer(              callbackHandleSet, callbackHandleGet);
 
 
 // Initialization helper
@@ -100,13 +96,11 @@ struct {
 
 
 /**
- * Callback indicating that we need to save the configuration
+ * Convert string to integer
+ * @param psz Input string
+ * @param dest Output value
+ * @return false if failed to convert string
  */
-void configSaveCallback () {
-  Serial1.println("Config: Should save config");
-  H801Config.shouldSaveConfig = true;
-}
-
 bool stringToInt(const char *psz, int *dest) {
   int result = 0;
   bool negative = false;
@@ -153,6 +147,10 @@ void setup() {
   digitalWrite(H801_LED_PIN_R, 0);
   digitalWrite(H801_LED_PIN_G, 1);
 
+  // GPIO0 as input
+  pinMode(H801_GPIO_PIN0, INPUT);
+
+
   // Generate hostname and chip id
   sprintf(H801Config.chipID, "%08X", ESP.getChipId());
   sprintf(H801Config.hostname, "H801 %08X", ESP.getChipId());
@@ -164,11 +162,9 @@ void setup() {
   Serial1.println("--------------------------");
   Serial1.println();
 
-  delay(10000);
-
   // Default config values
-  strlcpy(H801Config.mqttServer, "", countof(H801Config.mqttServer));
-  strlcpy(H801Config.mqttPort,   "1883",       countof(H801Config.mqttPort));
+  strlcpy(H801Config.mqttServer,     "", countof(H801Config.mqttServer));
+  strlcpy(H801Config.mqttPort,   "1883", countof(H801Config.mqttPort));
 
   Serial1.println("Config: Loading config");
 
@@ -193,6 +189,7 @@ void setup() {
     JsonObject& json = jsonBuffer.parseObject(buf.get());
 
     if (json.success()) {
+      Serial1.print("Config: ");
       json.printTo(Serial1);
       Serial1.println("\nparsed json");
 
@@ -216,7 +213,10 @@ void setup() {
   WiFiManager wifiManager;
 
   //set config save notify callback
-  wifiManager.setSaveConfigCallback(configSaveCallback);
+  wifiManager.setSaveConfigCallback([]() {
+    Serial1.println("Config: Should save config");
+    H801Config.shouldSaveConfig = true;
+  });
 
   //set static ip
   //wifiManager.setSTAStaticIPConfig(IPAddress(10,0,1,99), IPAddress(10,0,1,1), IPAddress(255,255,255,0));
@@ -227,7 +227,7 @@ void setup() {
   wifiManager.addParameter(&customMQTTPort);
 
   //reset settings - for testing
-  //wifiManager.resetSettings();
+  wifiManager.resetSettings();
 
   //sets timeout until configuration portal gets turned off
   //useful to make it all retry or go to sleep
@@ -271,8 +271,13 @@ void setup() {
 
     File configFile = SPIFFS.open(H801_CONFIG_FILE, "w");
     if (configFile) {
-      json.printTo(Serial);
       json.printTo(configFile);
+
+      // Print config
+      Serial1.print("Config Save: ");
+      json.printTo(Serial);
+      Serial1.println("");
+
       configFile.close();
     }
     else {
@@ -281,8 +286,7 @@ void setup() {
     //end save
   }
 
-
-  // Setup MQTT server if we have configured one
+  // Setup MQTT client if we have configured one
   if (*H801Config.mqttServer != '\0') {
     // Convert mqtt_port to int, default to 1883
     if (!(*H801Config.mqttPort && 
@@ -294,22 +298,12 @@ void setup() {
     Serial1.printf("  %15s \"%s\":%u\r\n", "MQTT:", H801Config.mqttServer, H801Config.mqttPortNum);
 
     // init the MQTT connection
-    mqttClient.set_Config(H801Config.chipID, H801Config.mqttServer, H801Config.mqttPortNum);
+    s_mqttClient.setup(H801Config.chipID, H801Config.mqttServer, H801Config.mqttPortNum);
   }
 
+  // Setup HTTP server
+  s_httpServer.setup(H801Config.hostname);
 
-  MDNS.begin(H801Config.hostname);
-
-  httpUpdater.setup(&httpServer);
-  
-  httpServer.on("/",           HTTP_GET, httpHandleRoot);
-  httpServer.on("/index.html", HTTP_GET, httpHandleRoot);
-
-  httpServer.on("/status", HTTP_GET,  httpHandleGET);
-  httpServer.on("/status", HTTP_POST, httpHandlePOST);
-  httpServer.begin();
-
-  MDNS.addService("http", "tcp", 80);
 
   Serial1.println("\r\nSystem: Information");
   Serial1.printf("%20s: ", "getBootMode");
@@ -368,14 +362,14 @@ bool jsonToLight(JsonObject& json) {
   bool isChanged = false;
 
   // Check all PWM leds
-  for (uint i = 0; i < countof(LedStatus); i++) {
-    String id = LedStatus[i].get_ID();
+  for (H801_Led& led : LedStatus) {
+    String &id = led.get_ID();
     
     // Skip led if we don't have any value
     if (!json.containsKey(id))
       continue;
 
-    if (!LedStatus[i].set_Bri(json[id], fadeSteps))
+    if (!led.set_Bri(json[id], fadeSteps))
       continue;
 
     // Indicate that we have changed the light
@@ -388,20 +382,17 @@ bool jsonToLight(JsonObject& json) {
 
 /**
  * Generate string with current status as JSON string
- * @return status string
+ * @return Current status as JSON string 
  */
-char * statusToJSONString() {
+const char * statusToJSONString() {
   static char buffer[1024];
 
   StaticJsonBuffer<200> jsonBuffer;
   JsonObject& root = jsonBuffer.createObject();
 
-  // Global on/off state
-  root["on"] = H801StatusOn;
-
   // Convert each led state
-  for (uint i = 0; i < countof(LedStatus); i++) {
-    root[LedStatus[i].get_ID()] = LedStatus[i].get_Bri();
+  for (H801_Led& led : LedStatus) {
+    root[led.get_ID()] = led.get_Bri();
   }
 
   // Serialize JSON
@@ -412,184 +403,35 @@ char * statusToJSONString() {
 
 
 /**
- * Determine content type by file extension
- * @param  filename  File to get conent type for
- * @return Content type string
+ * Callback used to update current LED values
+ * @param  json   JSON object with new status
+ * @return        New status as JSON stirng
  */
-String httpContentType(String filename){
-       if(filename.endsWith(".htm")) return "text/html";
-  else if(filename.endsWith(".html")) return "text/html";
-  else if(filename.endsWith(".css")) return "text/css";
-  else if(filename.endsWith(".js"))  return "application/javascript";
-  else if(filename.endsWith(".png")) return "image/png";
-  else if(filename.endsWith(".gif")) return "image/gif";
-  else if(filename.endsWith(".jpg")) return "image/jpeg";
-  else if(filename.endsWith(".ico")) return "image/x-icon";
-  else if(filename.endsWith(".xml")) return "text/xml";
-  else if(filename.endsWith(".pdf")) return "application/x-pdf";
-  else if(filename.endsWith(".zip")) return "application/x-zip";
-  else if(filename.endsWith(".gz")) return "application/x-gzip";
-  return "text/plain";
-}
-
-/**
- * Stream file from SPIFFS to HTTP client
- * @param  path   File to serve
- * @return false  If unable to find file
- *         true   If able to send file to client
- */
-bool handleFileRead(String path){
-  Serial1.printf("handleFileRead: %s\r\n", path.c_str());
-  if(path.endsWith("/")) path += "index.html";
-  String contentType = httpContentType(path);
-  if(SPIFFS.exists(path)){
-    File file = SPIFFS.open(path, "r");
-    size_t sent = httpServer.streamFile(file, contentType);
-    file.close();
-    return true;
-  }
-  return false;
-}
-
-
-/**
- * HTTP handle for root/index page
- */
-void httpHandleRoot() {
-  if(!handleFileRead("/index.html"))
-    httpServer.send(404, "text/plain", "FileNotFound");
-}
-
-
-/**
- * HTTP handle for POST
- */
-void httpHandlePOST() {
-  StaticJsonBuffer<200> jsonBuffer;
-  
-  // Check if body received
-  if (httpServer.hasArg("plain")== false) { 
-    httpServer.send(200, "application/json", "{ \"message\": \"Body not received\"}");
-    return;
-  }
-
-  //Serial1.print("POST Input: ");
-  //Serial1.println(httpServer.arg("plain"));
-
-  // Parse the json
-  JsonObject& json = jsonBuffer.parseObject(httpServer.arg("plain"));
-
-  // Failed to parse json
-  if (!json.success()) {
-    httpServer.send(406, "application/json", "{ \"message\": \"invalid JSON\"}");
-    return;
-  }
-
-  Serial1.print("POST Parsed: ");
-  json.printTo(Serial1);
-  Serial1.println();
-
-  // Update light from json string, ensure 
-  if (jsonToLight(json))
-    isFading = true;
-
-  char *jsonString = statusToJSONString();
-  
-  // Publish changes
-  mqttClient.publishConfigUpdate(jsonString);
-  Serial1.println(jsonString);
-
-  httpServer.send(200, "application/json", jsonString);
-
-  return;
-}
-
-
-/**
- * HTTP handle for GET
- */
-void httpHandleGET() {
-  int tmp;
-  bool bGotArgs = false;
-  StaticJsonBuffer<200> jsonBuffer;
-
-  JsonObject& json = jsonBuffer.createObject();
-
-  if (httpServer.hasArg("on")) {
-    bGotArgs = true;
-    json["on"] = httpServer.arg("on");
-  }
-
-  if (httpServer.hasArg("duration") && stringToInt(httpServer.arg("duration").c_str(), &tmp)) {
-    bGotArgs = true;
-    json["duration"] = tmp;
-  }
-
-    // Convert each led state
-  for (uint i = 0; i < countof(LedStatus); i++) {
-    String id = LedStatus[i].get_ID();
-    if (!httpServer.hasArg(id))
-      continue;
-
-    if (!stringToInt(httpServer.arg(id).c_str(), &tmp))
-      continue;
-
-    bGotArgs = true;
-    json[id] = tmp;
-  }
-
-  // Did we get any arg
-  if (bGotArgs) {
-    Serial1.print("GET Parsed: ");
-    json.printTo(Serial1);
-    Serial1.println();
-
-    // Update light from json string
-    if (jsonToLight(json))
-      isFading = true;
-  }
-
-
-  char *jsonString = statusToJSONString();
-
-  // Only publish if changed  
-  if (bGotArgs) {
-    mqttClient.publishConfigUpdate(jsonString);
-    Serial1.println(jsonString);
-  }
-
-  httpServer.send(200, "application/json", jsonString);
-
-  return;
-} 
-
-
-/**
- * Callback used by MQTT to update current LED values
- * @param  jsonString New status as JSON string
- * @return New status as JSON stirng
- */
-char *mqttHandleSet(char *jsonString) {
-  StaticJsonBuffer<200> jsonBuffer;
-
-  // Parse the json
-  JsonObject& json = jsonBuffer.parseObject(jsonString);
-
-  // Failed to parse json
+const char *callbackHandleSet(JsonObject& json) {
+  // Check for bad JSON
   if (!json.success()) {
     return NULL;
   }
 
-  Serial1.print("MQTT Parsed: ");
+  Serial1.print("Input JSON: ");
   json.printTo(Serial1);
+  Serial1.println("");
 
   // Update light from json string
-  if (jsonToLight(json))
-    isFading = true;
+  if (jsonToLight(json)) {
+    s_isFading = true;
+  }
 
   // Get current config
-  jsonString = statusToJSONString();
+  const char*jsonString = statusToJSONString();
+
+  Serial1.print("State: ");
   Serial1.println(jsonString);
+
+  // If changed, publish state
+  if (s_isFading) {
+    s_mqttClient.publishConfigUpdate(jsonString);
+  }
 
   return jsonString;
 }
@@ -598,7 +440,7 @@ char *mqttHandleSet(char *jsonString) {
  * Retreives current status
  * @return JSON string with current status
  */
-char *mqttHandleGet(void) {
+const char *callbackHandleGet(void) {
   return statusToJSONString();
 }
 
@@ -610,31 +452,83 @@ void loop() {
   static unsigned long lastFade = 0;
   static unsigned int fadingLedIndex = 0;
 
+  // De-bounce the button on startup
+  static bool buttonInit = false;
+
+  // What direction are we fading with the button
+  static bool buttonFadeDirUp = false;
+
   unsigned long time = millis();
 
-  // process OTA updates
-  httpServer.handleClient();
+  // process HTTP
+  s_httpServer.loop();
   
   // process MQTT
-  mqttClient.loop(time);
+  s_mqttClient.loop(time);
+
+  // Check if GPIO i pressed for 500ms
+  static unsigned long gpioCount = 0;
+  if (!digitalRead(H801_GPIO_PIN0)) {
+    gpioCount++;
+  }
+
+  // Need to broadcast change
+  else if (gpioCount > 500) {
+    const char *jsonString = statusToJSONString();
+
+    Serial1.print("State: ");
+    Serial1.println(jsonString);
+
+    // Publish change  
+    s_mqttClient.publishConfigUpdate(jsonString);
+
+    gpioCount = 0;
+
+    // Green light on
+    digitalWrite(H801_LED_PIN_G, false);
+  }
+
+  // Reset counter
+  else {
+    gpioCount = 0;
+    buttonInit = true;
+  }
+
+  // Button pressed for 500ms
+  if (gpioCount >= 500 && buttonInit) {
+    // First time we enter
+    if (gpioCount == 500) {
+      buttonFadeDirUp = !buttonFadeDirUp;
+      Serial1.printf("Button pressed: fading %s\r\n", buttonFadeDirUp? "up":"down");
+    }
+
+    if ((gpioCount & 0x7) == 0) {
+      digitalWrite(H801_LED_PIN_G, (gpioCount & 0xff) != 0x00);
+
+      // For each led
+      for (H801_Led& led : LedStatus) {
+        led.do_ButtonFade(buttonFadeDirUp);
+      }
+    }
+    // Ensure that gpioCount don't overflow
+    gpioCount &= 0x0FFFFFFF;
+  }
 
   // Are we fading light
-  if (isFading && (time >= lastFade + (100/H801_DURATION_FADE_STEPS) || time < lastFade)) {
+  else if (s_isFading && (time >= lastFade + (100/H801_DURATION_FADE_STEPS) || time < lastFade)) {
     lastFade = time;
-    isFading = false;
-    uint i;
+    s_isFading = false;
 
-    // For each led
-    for (i=0; i < countof(LedStatus); i++) {
-      // Fade led,
-      if (LedStatus[i].do_Fade())
-        isFading = true;
+    // Fade each light
+    for (H801_Led& led : LedStatus) {
+      if (led.do_Fade())
+        s_isFading = true;
     }
 
     // Blink leds during fading, ensure led is green when done
     fadingLedIndex++;
-    if (isFading) {    
-      digitalWrite(H801_LED_PIN_G, (fadingLedIndex&(0x7)) != 0x00);
+    if (s_isFading) {    
+      digitalWrite(H801_LED_PIN_G, (fadingLedIndex & 0x7) != 0x00);
       //digitalWrite(H801_LED_PIN_R, (fadingLedIndex&(0x04)) != );
     }
     else {

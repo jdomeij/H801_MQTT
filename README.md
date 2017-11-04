@@ -37,11 +37,10 @@ Example: The following JSON will change the Red channel to max and Green to min 
 By sending JSON encoded string to the MQTT topic `{id}/set`, where id is the unique chip id value, it's possible to control the channels.
 The MQTT topic `{id}/updated` will be emitted when changes are made for any of the channels.
 
-
 #### HTTP POST
 By sending JSON encoded string to the `/status` page it's possible to controll the channels.
 
 #### HTTP GET
-By doing and HTTP GET on the `/status` page and providing HTML encoded variable, example `/status?R=255&time=5000`, it is possible to set the values.
+By doing and HTTP GET on the `/status` page and providing HTML encoded variable, example `/status?R=255&W1=0&duration=5000`, it is possible to set the values.
 
 

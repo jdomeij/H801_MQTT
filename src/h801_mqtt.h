@@ -1,5 +1,4 @@
-typedef char* (*MQTT_CallbackSetConfig)(char *);
-typedef char* (*MQTT_CallbackGetConfig)(void);
+
 
 // MQTT paths
 #define H801_MQTT_PING   "/ping"
@@ -11,15 +10,15 @@ typedef char* (*MQTT_CallbackGetConfig)(void);
 
 
 /**
- * H801 MQTT class
+ * H801 MQTT handling
  */
 class H801_MQTT {
   private:
     bool m_bValidConfig;
 
     PubSubClient m_mqttClient;
-    MQTT_CallbackSetConfig m_setConfig;
-    MQTT_CallbackGetConfig m_getConfig;
+    H801_CallbackSetConfig m_setConfig;
+    H801_CallbackGetConfig m_getConfig;
     char *m_chipID;
 
     char m_mqttTopicChange[strlen(H801_MQTT_CHANGE) + 16];
@@ -27,6 +26,7 @@ class H801_MQTT {
     char m_mqttTopicSet[strlen(H801_MQTT_SET) + 16];
 
     unsigned long m_lastPost;
+    unsigned long m_lastReconnect;
 
     /**
      * MQTT callback
@@ -38,8 +38,6 @@ class H801_MQTT {
       static char payload[200];
       if (mqttLength >= countof(payload))
         return;
-
-      Serial1.printf("callback: %s\r\n", mqttTopic);
       
       // Set topic
       if (!strcmp(mqttTopic, m_mqttTopicSet)) {        
@@ -47,23 +45,33 @@ class H801_MQTT {
         strncpy(payload, (char*)mqttPayload, min(mqttLength, countof(payload)));
         payload[min(mqttLength, countof(payload) - 1)] = '\0';
 
+        StaticJsonBuffer<200> jsonBuffer;
 
-        char *response = m_setConfig(payload);
-        if (response) {
-          m_mqttClient.publish(m_mqttTopicChange, response, false);
+        // Parse the json
+        JsonObject& json = jsonBuffer.parseObject(payload);
+
+        if (!json.success()) {
+          return;
         }
+
+        Serial1.print("MQTT /set: ");
+        json.printTo(Serial1);
+        Serial1.println("");
+
+
+        // Change event is automatically triggered so ignore response
+        m_setConfig(json);
         return;
       }
     }
 
   public:
-    H801_MQTT(WiFiClient &wifiClient, MQTT_CallbackSetConfig setConfig, MQTT_CallbackGetConfig getConfig) {
+    H801_MQTT(WiFiClient &wifiClient, H801_CallbackSetConfig setConfig, H801_CallbackGetConfig getConfig) {
       m_mqttClient = PubSubClient(wifiClient);
 
       H801_MQTT *THIS = this;
 
       m_mqttClient.setCallback([&](char* mqttTopic, byte* mqttPayload, unsigned int mqttLength) {
-        Serial1.printf("setCallback: %s\r\n", mqttTopic);
         this->callback(mqttTopic, mqttPayload, mqttLength);
       });
 
@@ -71,6 +79,7 @@ class H801_MQTT {
       m_getConfig = getConfig;
 
       m_lastPost = 0;
+      m_lastReconnect = 0;
       m_mqttTopicChange[0] = '\0';
       m_mqttTopicPing[0]   = '\0';
       m_mqttTopicSet[0]    = '\0';
@@ -84,7 +93,7 @@ class H801_MQTT {
      * @param server Server address
      * @param port   Server port
      */
-    void set_Config(char *chipID, char *server, uint16_t port) {
+    void setup(char *chipID, char *server, uint16_t port) {
       if (!server) {
         m_bValidConfig = false;
         return;
@@ -114,12 +123,13 @@ class H801_MQTT {
      * Publish config changes to MQTT
      * @param buffer New configuration
      */
-    void publishConfigUpdate(char *buffer) {
+    void publishConfigUpdate(const char *buffer) {
       if (!m_bValidConfig || !m_mqttClient.connected())
         return;
 
       m_mqttClient.publish(m_mqttTopicChange, buffer, false);
     }
+
 
     /**
      * MQTT loop
@@ -130,30 +140,37 @@ class H801_MQTT {
         return;
 
       // Check if we are connected
-      if (!m_mqttClient.connected()) {
+      if (m_mqttClient.connected())
+        ; // Ignore
 
-        // Attempt to re-connect
-        if (!m_mqttClient.connect(m_chipID)) {
-          Serial1.print("MQTT: failed, state(");
-          Serial1.print(m_mqttClient.state());
-          Serial1.println(") trying again in 5s");
-          // Wait 5 seconds before retrying
-          delay(5000);
+      // Waiting period for next re-connect
+      else if (time > m_lastReconnect && time < m_lastReconnect + 5000) {
+        return;
+      }
+
+      // Attempt to re-connect
+      else if (!m_mqttClient.connect(m_chipID)) {
+        Serial1.print("MQTT: failed, state(");
+        Serial1.print(m_mqttClient.state());
+        Serial1.println(") trying again in 5s");
+        
+        m_lastReconnect = time;
           return;
-        }
+      }
 
+      // Connected
+      else {
         Serial1.println("MQTT: Connected");
-
         m_mqttClient.subscribe(m_mqttTopicSet);
       }
 
       m_mqttClient.loop();
 
       // Trigger if we have wrapped or we had a timeout
-      if (time > m_lastPost + (H801_MQTT_PING_INTERVAL) || time < m_lastPost) {
+      if (time < m_lastPost || time > m_lastPost + (H801_MQTT_PING_INTERVAL)) {
         m_lastPost = time;
 
-        char *buffer = m_getConfig();
+        const char *buffer = m_getConfig();
         if (buffer)
           m_mqttClient.publish(m_mqttTopicPing, buffer, false);
       }
