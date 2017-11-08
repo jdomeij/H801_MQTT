@@ -4,8 +4,7 @@ class H801_HTTP {
   private:
     ESP8266WebServer m_httpServer;
     ESP8266HTTPUpdateServer m_httpUpdater;
-    H801_CallbackSetConfig m_setConfig;
-    H801_CallbackGetConfig m_getConfig;
+    PH801_Functions m_functions;
 
     /**
      * Determine content type by file extension
@@ -84,7 +83,7 @@ class H801_HTTP {
       json.printTo(Serial1);
       Serial1.println();
 
-      const char *jsonString = m_setConfig(json);
+      const char *jsonString = m_functions->set_Status(json);
       m_httpServer.send(200, "application/json", jsonString);
       return;
     }
@@ -98,7 +97,7 @@ class H801_HTTP {
 
       // Check if we have arguments
       if ((numArgs = m_httpServer.args()) == 0) {
-        m_httpServer.send(200, "application/json", m_getConfig());
+        m_httpServer.send(200, "application/json", m_functions->get_Status());
         return;
       }
 
@@ -115,7 +114,7 @@ class H801_HTTP {
       json.printTo(Serial1);
       Serial1.println();
 
-      const char *jsonString = m_setConfig(json);
+      const char *jsonString = m_functions->set_Status(json);
       if (!jsonString) {
         m_httpServer.send(406, "application/json", "{ \"message\": \"Unable to update lights\"}");
       }
@@ -124,12 +123,11 @@ class H801_HTTP {
     }
 
   public:
-    H801_HTTP(H801_CallbackSetConfig setConfig, H801_CallbackGetConfig getConfig) {
+    H801_HTTP(PH801_Functions functions) {
       m_httpServer  = ESP8266WebServer(80);
       m_httpUpdater = ESP8266HTTPUpdateServer();
 
-      m_setConfig = setConfig;
-      m_getConfig = getConfig;
+      m_functions = functions;
     }
 
 
