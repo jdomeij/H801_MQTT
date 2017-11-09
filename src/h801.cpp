@@ -44,8 +44,8 @@ const char *funcGetStatus(void);
 
 const char *funcSetConfig(JsonObject&);
 const char *funcGetConfig(void);
-void  funcSaveConfig(void);
-void  funcReadConfig(void);
+bool  funcSaveConfig(void);
+bool  funcReadConfig(void);
 
 
 typedef struct tagH801_Functions {
@@ -60,6 +60,23 @@ typedef struct tagH801_Functions {
 } H801_Functions, *PH801_Functions;
 
 
+// H801 configuration
+typedef struct tagH801_CONFIG {
+  struct {
+    char hostname[16];
+  } HTTP;
+
+  struct {
+    char server[128];
+    char port[6];
+
+    char alias[128];
+
+    char login[128];
+    char passw[128];
+  } MQTT;
+
+} H801_Config, *PH801_Config;
 
 
 #include "h801_led.h"
@@ -92,8 +109,10 @@ H801_Functions callbackFunctions = {
 };
 
 
+
 // Global variables
 static bool s_isFading = false;
+static bool s_shouldSaveConfig = false;
 
 static WiFiClient s_wifiClient;
 static H801_MQTT s_mqttClient(s_wifiClient, &callbackFunctions);
@@ -112,24 +131,13 @@ H801_Led LedStatus[] = {
   H801_Led("W2")
 };
 
-
-// H801 configuration
-struct {
-  char hostname[16];
-
-  bool shouldSaveConfig;
-  char mqttServer[40];
-  char mqttPort[6];
-  uint16_t mqttPortNum;
-
-} H801Config;
+static H801_Config s_config = {0};
 
 
 /**
  * Setup H801 and connect to the WiFi
  */
 void setup() {
-
   // Setup console
   Serial1.begin(115200);
   Serial1.println("--------------------------");
@@ -150,7 +158,7 @@ void setup() {
     {PERIPHS_IO_MUX_GPIO4_U, FUNC_GPIO4,   4}, // W2
   };
 
-  for (int i=0; i < countof(LedStatus); i++) {
+  for (size_t i = 0; i < countof(LedStatus); i++) {
     LedStatus[i].setup(h801_pwm_io_info[i][2], i);
   }
 
@@ -172,36 +180,55 @@ void setup() {
 
 
   // Generate hostname
-  sprintf(H801Config.hostname, "H801 %08X", ESP.getChipId());
+  snprintf(s_config.HTTP.hostname, countof(s_config.HTTP.hostname), "H801 %08X", ESP.getChipId());
+  s_config.HTTP.hostname[countof(s_config.HTTP.hostname)-1] = '\0';
 
-  // Default config values
-  strlcpy(H801Config.mqttServer,     "", countof(H801Config.mqttServer));
-  strlcpy(H801Config.mqttPort,   "1883", countof(H801Config.mqttPort));
 
+  bool resetWifiSettings = false;
   Serial1.println("Config: Loading config");
 
+
   if (!SPIFFS.begin()) {
-    Serial1.println("Config: failed to mount FS");
-    return;
+    Serial1.println("Config: failed to mount FS, settings was cleared");
+    resetWifiSettings = true;
   }
   // Try to read the configuration file 
-  funcReadConfig();
-
-  // The extra parameters to be configured (can be either global or just in the setup)
-  // After connecting, parameter.getValue() will get you the configured value
-  // id/name placeholder/prompt default length
-  WiFiManagerParameter customMQTTTitle("<br><b>MQTT Config</B> (optional)");
-  WiFiManagerParameter customMQTTServer("server", "mqtt server", H801Config.mqttServer, 40);
-  WiFiManagerParameter customMQTTPort(  "port",   "mqtt port",   H801Config.mqttPort, 6);
+  else if (!funcReadConfig()) {
+    Serial1.println("Config: failed to read config, settings was cleared");
+    resetWifiSettings = true;
+  }
+  else {
+    Serial1.print("Config: ");
+    Serial1.println(funcGetConfig());
+  }
 
   //WiFiManager
   //Local intialization. Once its business is done, there is no need to keep it around
   WiFiManager wifiManager;
 
+  // Failed to read settings so we should reset wifi settings
+  if (resetWifiSettings)
+    wifiManager.resetSettings();
+
+  // The extra parameters to be configured (can be either global or just in the setup)
+  // After connecting, parameter.getValue() will get you the configured value
+  // id/name placeholder/prompt default length
+  WiFiManagerParameter customMQTTTitle("<br><b>MQTT Config</B> (optional)");
+  WiFiManagerParameter customMQTTServer("mqttServer", "mqtt server",    s_config.MQTT.server, countof(s_config.MQTT.server));
+  WiFiManagerParameter customMQTTPort(  "mqttPort",   "mqtt port",      s_config.MQTT.port,   countof(s_config.MQTT.port));
+
+  WiFiManagerParameter customMQTTAliasBR("<br>");
+  WiFiManagerParameter customMQTTAlias("mqttAlias",   "mqtt alias",     s_config.MQTT.alias, countof(s_config.MQTT.alias));
+  
+  WiFiManagerParameter customMQTTLoginBR("<br>");
+  WiFiManagerParameter customMQTTLogin("mqttSLogin",  "mqtt login",     s_config.MQTT.login, countof(s_config.MQTT.login));
+  WiFiManagerParameter customMQTTPassw("mqttPassw",   "mqtt password",  s_config.MQTT.passw, countof(s_config.MQTT.passw));
+
+
   //set config save notify callback
   wifiManager.setSaveConfigCallback([]() {
     Serial1.println("Config: Should save config");
-    H801Config.shouldSaveConfig = true;
+    s_shouldSaveConfig = true;
   });
 
   //set static ip
@@ -211,6 +238,13 @@ void setup() {
   wifiManager.addParameter(&customMQTTTitle);
   wifiManager.addParameter(&customMQTTServer);
   wifiManager.addParameter(&customMQTTPort);
+  
+  wifiManager.addParameter(&customMQTTAliasBR);
+  wifiManager.addParameter(&customMQTTAlias);
+
+  wifiManager.addParameter(&customMQTTLoginBR);
+  wifiManager.addParameter(&customMQTTLogin);
+  wifiManager.addParameter(&customMQTTPassw);
 
   //reset settings - for testing
   //wifiManager.resetSettings();
@@ -225,7 +259,7 @@ void setup() {
   //fetches ssid and pass and tries to connect
   //if it does not connect it starts an access point with the specified name
   //and goes into a blocking loop awaiting configuration
-  if (!wifiManager.autoConnect(H801Config.hostname)) {
+  if (!wifiManager.autoConnect(s_config.HTTP.hostname)) {
     Serial1.println("WiFi: failed to connect, timeout detected");
     delay(3000);
     //reset and try again, or maybe put it to deep sleep
@@ -235,7 +269,7 @@ void setup() {
 
 
   //if you get here you have connected to the WiFi
-  Serial1.println("\r\nWiFi: Connected");
+  Serial1.println("\nWiFi: Connected");
 
   Serial1.printf("  %15s %s\n", "IP:",      WiFi.localIP().toString().c_str());
   Serial1.printf("  %15s %s\n", "Subnet:",  WiFi.subnetMask().toString().c_str());
@@ -243,35 +277,38 @@ void setup() {
   Serial1.printf("  %15s %s\n", "MAC:",     WiFi.macAddress().c_str());
   Serial1.printf("  %15s %s\n", "SSID:",    WiFi.SSID().c_str());
 
-  //read updated parameters
-  strcpy(H801Config.mqttServer, customMQTTServer.getValue());
-  strcpy(H801Config.mqttPort,   customMQTTPort.getValue());
-
-  //save the custom parameters to FS
-  if (H801Config.shouldSaveConfig) {
-    funcSaveConfig();
+  if (s_shouldSaveConfig) {
+    //read updated parameters
+    strlcpy(s_config.MQTT.server, customMQTTServer.getValue(),  countof(s_config.MQTT.server));
+    strlcpy(s_config.MQTT.port,   customMQTTPort.getValue(),    countof(s_config.MQTT.port));
+    strlcpy(s_config.MQTT.alias,  customMQTTAlias.getValue(),   countof(s_config.MQTT.alias));
+    strlcpy(s_config.MQTT.alias,  customMQTTAlias.getValue(),   countof(s_config.MQTT.alias));
+    strlcpy(s_config.MQTT.login,  customMQTTLogin.getValue(),   countof(s_config.MQTT.login));
+    strlcpy(s_config.MQTT.passw,  customMQTTPassw.getValue(),   countof(s_config.MQTT.passw));    
   }
 
-  // Setup MQTT client if we have configured one
-  if (*H801Config.mqttServer != '\0') {
-    // Convert mqtt_port to int, default to 1883
-    if (!(*H801Config.mqttPort && 
-          (H801Config.mqttPortNum = (uint16_t)strtol(H801Config.mqttPort, NULL, 10)) != 0)) {
-      H801Config.mqttPortNum = 1883;
-    }
 
+  // Setup MQTT client if we have configured one
+  if (*s_config.MQTT.server) {
     // Print MQTT
-    Serial1.printf("  %15s \"%s\":%u\r\n", "MQTT:", H801Config.mqttServer, H801Config.mqttPortNum);
+    Serial1.printf("  %15s \"%s\":%s\n", "MQTT:", s_config.MQTT.server, s_config.MQTT.port);
 
     // init the MQTT connection
-    s_mqttClient.setup(H801Config.mqttServer, H801Config.mqttPortNum);
+    if (!s_mqttClient.setup(&s_config)) {
+      Serial1.println("MQTT: Failed to connect to server");
+    }
+
   }
 
   // Setup HTTP server
-  s_httpServer.setup(H801Config.hostname);
+  s_httpServer.setup(&s_config);
 
+  //save the custom parameters to FS
+  if (s_shouldSaveConfig) {
+    funcSaveConfig();
+  }
 
-  Serial1.println("\r\nSystem: Information");
+  Serial1.println("\nSystem: Information");
   Serial1.printf("%20s: ", "getBootMode");
   Serial1.println(ESP.getBootMode());
   Serial1.printf("%20s: ", "getSdkVersion");
@@ -294,7 +331,7 @@ void setup() {
   // Green light on
   digitalWrite(H801_LED_PIN_G, false);
 
-  Serial1.println("\r\nSystem: Running");
+  Serial1.println("\nSystem: Running");
 }
 
 
@@ -336,7 +373,7 @@ void loop() {
   }
 
   // de-bounce
-  else if (gpioCount < 200) {
+  else if (gpioCount < 100) {
     // Clear counter
     gpioCount = 0;
     buttonInit = true;
@@ -373,7 +410,7 @@ void loop() {
     // First time we enter
     if (gpioCount == 700) {
       buttonFadeDirUp = !buttonFadeDirUp;
-      Serial1.printf("Button pressed: fading %s\r\n", buttonFadeDirUp? "up":"down");
+      Serial1.printf("Button pressed: fading %s\n", buttonFadeDirUp? "up":"down");
     }
 
     if (time >= lastFade + (100/H801_DURATION_FADE_STEPS) || time < lastFade) {
@@ -453,8 +490,6 @@ bool stringToUnsignedLong(const char *psz, unsigned long *dest) {
  * @return Did any led value change
  */
 bool jsonToLight(JsonObject& json, unsigned long fadeTime) {
-  int tmp;
-
   // Calculate number of steps for this duration
   uint32_t fadeSteps = 0;
   if (fadeTime > 0)
@@ -536,7 +571,6 @@ const char *funcSetStatus(JsonObject& json) {
   unsigned long fadeTime = 0;
   if (json.containsKey("duration")) {
     const JsonVariant &fadeValue = json["duration"];
-    int tmp;;
 
     // Number value
     if (fadeValue.is<long>())
@@ -579,8 +613,14 @@ const char *funcGetConfig() {
   StaticJsonBuffer<200> jsonBuffer;
   JsonObject& root = jsonBuffer.createObject();
 
-  root["mqtt_server"] = H801Config.mqttServer;
-  root["mqtt_port"]   = H801Config.mqttPort;
+  root["mqtt_server"] = s_config.MQTT.server;
+  root["mqtt_port"]   = s_config.MQTT.port;
+
+  root["mqtt_alias"]  = s_config.MQTT.alias;
+
+  root["mqtt_login"]  = s_config.MQTT.login;
+  root["mqtt_passw"]  = s_config.MQTT.passw;
+
 
   // Serialize JSON
   root.printTo(buffer, sizeof(buffer));
@@ -601,40 +641,68 @@ const char *funcSetConfig(JsonObject& json) {
 /**
  * Write current configuration to SPIFFS
  */
-void funcSaveConfig(void) {
+bool funcSaveConfig(void) {
   const char *config = funcGetConfig();
 
   Serial1.println("Config: Saving config");
 
   File configFile = SPIFFS.open(H801_CONFIG_FILE, "w");
   
-  if (configFile) {
-    configFile.print(configFile);
-
-    // Print config
-    Serial1.print("Config Save: ");
-    Serial1.println(config);
-
-    configFile.close();
-  }
-  else {
+  if (!configFile) {
     Serial1.println("Config: Failed to open config file for writing");
+    configFile.close();
+    return false;
   }
+
+  // Print config
+  Serial1.print("Config Save: ");
+  Serial1.println(config);
+
+  if (!configFile.print(config)) {
+    Serial1.println("Config: Failed to write config file");
+    configFile.close();
+    return false;
+  }
+
+  configFile.close();
+  return true;
+}
+
+/**
+ * Copies single json property to string destination
+ * @param dest     Destination
+ * @param destSize Size
+ * @param json     JSON value
+ */
+static void funcReadConfigHelper(char *dest, size_t destSize, const JsonVariant &json) {
+  *dest = '\0';
+  if (!json.success())
+    return;
+
+  if (!json.is<char *>())
+    return;
+
+  const char *tmp = json.as<const char *>();
+  if (!tmp)
+    return;
+
+  strlcpy(dest, tmp, destSize);
 }
 
 /**
  * Read current configuration from SPIFFS
+ * @return false if failed to read config
  */
-void funcReadConfig() {
+bool funcReadConfig() {
   File configFile;
 
   if (!SPIFFS.exists(H801_CONFIG_FILE)) {
     Serial1.println("Config: No config file");
-    return;
+    return false;
   }
   if ((configFile = SPIFFS.open(H801_CONFIG_FILE, "r")) == 0) {
     Serial1.println("Config: Unable to open " H801_CONFIG_FILE);
-    return;
+    return false;
   }
 
   size_t size = configFile.size();
@@ -645,20 +713,25 @@ void funcReadConfig() {
   DynamicJsonBuffer jsonBuffer;
   JsonObject& json = jsonBuffer.parseObject(buf.get());
 
-  if (json.success()) {
-    Serial1.print("Config: ");
-    json.printTo(Serial1);
-    Serial1.println("\nparsed json");
+  if (!json.success()) {
+    Serial1.println("Config: Failed to parse json config");
+    Serial1.println(buf.get());
+    configFile.close();
+    return false;
+  }
 
-    strcpy(H801Config.mqttServer, json["mqtt_server"]);
-    strcpy(H801Config.mqttPort, json["mqtt_port"]);
-  }
-  else {
-    Serial1.println("Config: Failed to load json config");
-  }
+  Serial1.print("Config: Input JSON ");
+  json.printTo(Serial1);
+  Serial1.println("");
+
+  funcReadConfigHelper(s_config.MQTT.server,  countof(s_config.MQTT.server),  json["mqtt_server"]);
+  funcReadConfigHelper(s_config.MQTT.port,    countof(s_config.MQTT.port),    json["mqtt_port"]);
+  funcReadConfigHelper(s_config.MQTT.alias,   countof(s_config.MQTT.alias),   json["mqtt_alias"]);
+  funcReadConfigHelper(s_config.MQTT.login,   countof(s_config.MQTT.login),   json["mqtt_login"]);
+  funcReadConfigHelper(s_config.MQTT.passw,   countof(s_config.MQTT.passw),   json["mqtt_passw"]);
 
   configFile.close();
+
+  return true;
 }
-
-
 

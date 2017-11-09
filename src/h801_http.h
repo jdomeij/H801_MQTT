@@ -4,6 +4,7 @@ class H801_HTTP {
   private:
     ESP8266WebServer m_httpServer;
     ESP8266HTTPUpdateServer m_httpUpdater;
+    PH801_Config m_config;
     PH801_Functions m_functions;
 
     /**
@@ -34,17 +35,18 @@ class H801_HTTP {
      *         true   If able to send file to client
      */
     bool handleFileRead(String path){
-      Serial1.printf("handleFileRead: %s\r\n", path.c_str());
+      Serial1.printf("handleFileRead: %s\n", path.c_str());
       if(path.endsWith("/")) path += "index.html";
       String contentType = httpContentType(path);
       if(SPIFFS.exists(path)){
         File file = SPIFFS.open(path, "r");
-        size_t sent = m_httpServer.streamFile(file, contentType);
+        m_httpServer.streamFile(file, contentType);
         file.close();
         return true;
       }
       return false;
     }
+
 
     /**
      * HTTP handle for root/index page
@@ -131,8 +133,12 @@ class H801_HTTP {
     }
 
 
-    void setup(const char *hostname) {
-      MDNS.begin(hostname);
+    /**
+     * Setup HTTP server
+     * @param config Configuration
+     */
+    void setup(PH801_Config config) {
+      MDNS.begin(config->HTTP.hostname);
 
       m_httpUpdater.setup(&m_httpServer);
       

@@ -19,13 +19,17 @@ class H801_MQTT {
     bool m_bValidConfig;
 
     PubSubClient m_mqttClient;
+    PH801_Config m_config;
     PH801_Functions m_functions;
 
-    String m_chipID;
-    String m_topicButton;
-    String m_topicPing;
-    String m_topicSet;
-    String m_topicUpdate;
+    uint16_t m_port;
+
+    char m_chipID[10];
+    char m_topicButton[128];
+    char m_topicPing[128];
+    char m_topicSet[128];
+    char m_topicUpdate[128];
+    char m_topicSetNoAlias[128];
 
     unsigned long m_lastPost;
     unsigned long m_lastReconnect;
@@ -42,8 +46,9 @@ class H801_MQTT {
         return;
       
       // Set topic
-      if (!strcmp(mqttTopic, m_topicSet.c_str())) {        
-        // Copy mqtt payload to buffer and null terminate it
+      if (!strcmp(mqttTopic, m_topicSet) ||
+          (*m_topicSetNoAlias && !strcmp(mqttTopic, m_topicSetNoAlias))) {        
+        // Copy mqtt payload to buffer and NULL terminate it
         strncpy(payload, (char*)mqttPayload, min(mqttLength, countof(payload)));
         payload[min(mqttLength, countof(payload) - 1)] = '\0';
 
@@ -67,11 +72,37 @@ class H801_MQTT {
       }
     }
 
+    /**
+     * Concatinates two string into a third one
+     * @param  dst    Destination
+     * @param  dstLen Dest length
+     * @param  strA   First string
+     * @param  strB   Second string
+     * @return Number of characters written
+     */
+    size_t concatTopic(char *dst, size_t dstLen, const char *strA, const char *strB) {
+      size_t offset = strlcpy(dst, strA, dstLen);
+      if (offset + 1 >= dstLen)
+        return offset;
+
+      return offset + strlcpy(dst + offset, strB, dstLen - offset);
+    }
+
+    /**
+     * Updates topic variables with new topic prefix
+     * @param newTopic New topic prefix
+     */
+    void updateTopic(const char *newTopic) {
+      concatTopic(m_topicButton, countof(m_topicButton), newTopic, H801_MQTT_BUTTON);
+      concatTopic(m_topicPing,   countof(m_topicPing),   newTopic, H801_MQTT_PING);
+      concatTopic(m_topicUpdate, countof(m_topicUpdate), newTopic, H801_MQTT_UPDATE);
+      concatTopic(m_topicSet,    countof(m_topicSet),    newTopic, H801_MQTT_SET);
+    }
+
+
   public:
     H801_MQTT(WiFiClient &wifiClient, PH801_Functions functions) {
       m_mqttClient = PubSubClient(wifiClient);
-
-      H801_MQTT *THIS = this;
 
       m_mqttClient.setCallback([&](char* mqttTopic, byte* mqttPayload, unsigned int mqttLength) {
         this->callback(mqttTopic, mqttPayload, mqttLength);
@@ -79,40 +110,79 @@ class H801_MQTT {
 
       m_functions = functions;
 
-      m_chipID = String(ESP.getChipId(), HEX);
       m_lastPost = 0;
       m_lastReconnect = 0;
 
-      m_topicButton = String(m_chipID + H801_MQTT_BUTTON);
-      m_topicPing   = String(m_chipID + H801_MQTT_PING);
-      m_topicSet    = String(m_chipID + H801_MQTT_SET);
-      m_topicUpdate = String(m_chipID + H801_MQTT_UPDATE);
+
+      // Create base topics
+      snprintf(m_chipID, countof(m_chipID), "%08X", ESP.getChipId());
+      m_chipID[countof(m_chipID)-1] = '\0';
+
+      // Used when we have alias
+      m_topicSetNoAlias[0] = '\0';
+
+      updateTopic(m_chipID);
+
 
       m_bValidConfig = false;
     }
+
 
     /**
      * Set current MQTT config
      * @param server Server address
      * @param port   Server port
      */
-    void setup(char *server, uint16_t port) {
-      if (!server) {
+    bool setup(PH801_Config config) {
+      m_config = config;
+      if (!*m_config->MQTT.server) {
         m_bValidConfig = false;
-        return;
+        return true;
       }
 
-      m_mqttClient.setServer(server, port);
+      // Default mqtt port
+      m_port = 1883;
 
-      m_mqttClient.subscribe(m_topicSet.c_str());
+      // Convert mqtt_port to int, default to 1883
+      if (*m_config->MQTT.port) {
+        if ((m_port = (uint16_t)strtol(m_config->MQTT.port, NULL, 10)) == 0) {
+          m_port = 1883;
+        }
+      }
 
-      Serial1.println("MQTT Topics");
-      Serial1.println(m_topicButton);
-      Serial1.println(m_topicPing);
-      Serial1.println(m_topicSet);
-      Serial1.println(m_topicUpdate);
+      // Calculate new topics
+      if (m_config->MQTT.alias) {
+        updateTopic(m_config->MQTT.alias);
+        concatTopic(m_topicSetNoAlias, countof(m_topicSetNoAlias), m_chipID, H801_MQTT_SET);
+      }
+
+
+      Serial1.println("\nMQTT: Registered topics");
+      Serial1.printf("   %s\n", m_topicButton);
+      Serial1.printf("   %s\n", m_topicButton);
+      Serial1.printf("   %s\n", m_topicPing);
+      Serial1.printf("   %s\n", m_topicUpdate);
+      Serial1.printf("   %s\n", m_topicSet);
+      if (*m_topicSetNoAlias) {
+        Serial1.printf("   %s\n", m_topicSetNoAlias);
+      }
+
+      // Configure server
+      m_mqttClient.setServer(m_config->MQTT.server, m_port);
+
+      // Try to connect
+      if (this->connect()) {
+        // Always listen to the <id>/set topic
+        m_mqttClient.subscribe(m_topicSet);
+
+        // Register non-alias version
+        if (*m_topicSetNoAlias) {
+          m_mqttClient.subscribe(m_topicSetNoAlias);
+        }
+      }
 
       m_bValidConfig = true;
+      return true;
     }
 
     /**
@@ -123,7 +193,7 @@ class H801_MQTT {
       if (!m_bValidConfig || !m_mqttClient.connected())
         return;
 
-      m_mqttClient.publish(m_topicUpdate.c_str(), buffer, false);
+      m_mqttClient.publish(m_topicUpdate, buffer, false);
     }
 
     /**
@@ -133,7 +203,63 @@ class H801_MQTT {
       if (!m_bValidConfig || !m_mqttClient.connected())
         return;
 
-      m_mqttClient.publish(m_topicButton.c_str(), "{\"button\":true}", false);
+      m_mqttClient.publish(m_topicButton, "{\"button\":true}", false);
+    }
+
+    /**
+     * Convert MQTT client state to string
+     * @param  state Numeric state
+     * @return String representation of state
+     */
+    const char * getConnectStateInfo(int state) {
+      switch(state) {
+        case MQTT_CONNECTION_TIMEOUT:
+          return "the server didn't respond within the keepalive time";
+        case MQTT_CONNECTION_LOST:
+          return "the network connection was broken";
+        case MQTT_CONNECT_FAILED:
+          return "the network connection failed";
+        case MQTT_DISCONNECTED:
+          return "the client is disconnected cleanly";
+        case MQTT_CONNECTED:
+          return "the cient is connected";
+        case MQTT_CONNECT_BAD_PROTOCOL:
+          return "the server doesn't support the requested version of MQTT";
+        case MQTT_CONNECT_BAD_CLIENT_ID:
+          return "the server rejected the client identifier";
+        case MQTT_CONNECT_UNAVAILABLE:
+          return "the server was unable to accept the connection";
+        case MQTT_CONNECT_BAD_CREDENTIALS:
+          return "the username/password were rejected";
+        case MQTT_CONNECT_UNAUTHORIZED:
+          return "the client was not authorized to connect";
+        default:
+          break;
+      }
+      return "Unknown";
+    }
+
+
+    /**
+     * Handles connection to MQTT server
+     * @return false if failed to connect to server
+     */
+    bool connect() {
+      // No password
+      if (!*m_config->MQTT.login) {
+        if (m_mqttClient.connect(m_chipID))
+          return true;
+      }
+
+      // Password authentication
+      else {
+        if (m_mqttClient.connect(m_chipID, m_config->MQTT.login, m_config->MQTT.passw))
+          return true;
+      }
+
+      // Failed to connect
+      Serial1.printf("MQTT: connect failed, state: %d (%s)", m_mqttClient.state(), this->getConnectStateInfo(m_mqttClient.state()));
+      return false;
     }
 
 
@@ -155,19 +281,19 @@ class H801_MQTT {
       }
 
       // Attempt to re-connect
-      else if (!m_mqttClient.connect(m_chipID.c_str())) {
-        Serial1.print("MQTT: failed, state(");
-        Serial1.print(m_mqttClient.state());
-        Serial1.println(") trying again in 5s");
-        
+      else if (!this->connect()) {
+        Serial1.println("MQTT: re-trying again in 5s");        
         m_lastReconnect = time;
-          return;
+        return;
       }
 
       // Connected
       else {
         Serial1.println("MQTT: Connected");
-        m_mqttClient.subscribe(m_topicSet.c_str());
+        m_mqttClient.subscribe(m_topicSet);
+        if (*m_topicSetNoAlias) {
+          m_mqttClient.subscribe(m_topicSetNoAlias);
+        }
       }
 
       m_mqttClient.loop();
@@ -178,7 +304,7 @@ class H801_MQTT {
 
         const char *buffer = m_functions->get_Status();
         if (buffer)
-          m_mqttClient.publish(m_topicPing.c_str(), buffer, false);
+          m_mqttClient.publish(m_topicPing, buffer, false);
       }
 
     }
