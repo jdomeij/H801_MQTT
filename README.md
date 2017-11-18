@@ -3,11 +3,12 @@ ESP8266 based LED controller using MQTT and/or HTTP
 
 ### Features
 * Possible to control each channel separatly
-* Allows fading from one state to another
+* Allows smooth fading from one state to another
 * MQTT support
+** MQTT Login/Password support
+** Possible to set MQTT prefix for topics
 * REST API support
-* HTTP page support, builtin HTML page allowing control of colors
-* Possible to control fade interval for each channel individually 
+* Possible to control using webpage
 
 ### Control
 Available properties to set
@@ -34,7 +35,7 @@ Example: The following JSON will change the Red channel to max and Green to min 
 ```
 
 #### MQTT
-By sending JSON encoded string to the MQTT topic `{id}/set`, where id is the unique chip id value, it's possible to control the channels.
+By sending JSON encoded string to the MQTT topic `{id}/set`, where id is either the unique chip id value or the configured alias, it's possible to control the channels.
 The MQTT topic `{id}/updated` will be emitted when changes are made for any of the channels.
 
 #### HTTP POST
@@ -43,4 +44,23 @@ By sending JSON encoded string to the `/status` page it's possible to controll t
 #### HTTP GET
 By doing and HTTP GET on the `/status` page and providing HTML encoded variable, example `/status?R=255&W1=0&duration=5000`, it is possible to set the values.
 
+#### HTTP Page control
+Browsing to the device it is possible to control the unit using an simple webpage
+![HTTP Page](./doc/http.png)
 
+
+### Configuration
+#### Updating
+MQTT parameters can both be set during WiFi setup and run-time by posting using REST API to `/config`
+
+| Property | Type | Info |
+|---|---|---|
+| `mqtt_alias` | String | Prefix to use for MQTT topic, if not set Chip ID will be used |
+| `mqtt_server` | String | Server address |
+| `mqtt_port` | String | Server port, default value 1883 |
+| `mqtt_login` | String | Server login |
+| `mqtt_passw` | String | Server password, will be hidden over REST |
+
+
+#### Reset
+It's possible to reset the H801 device to initial setup by sending and HTTP DELETE to `/config` twice under 5 seconds. This will reset both the configuration and the WiFi credentials.

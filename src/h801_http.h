@@ -4,7 +4,7 @@ class H801_HTTP {
   private:
     ESP8266WebServer m_httpServer;
     ESP8266HTTPUpdateServer m_httpUpdater;
-    PH801_Config m_config;
+    H801_Config &m_config;
     PH801_Functions m_functions;
 
     /**
@@ -38,29 +38,36 @@ class H801_HTTP {
       Serial1.printf("handleFileRead: %s\n", path.c_str());
       if(path.endsWith("/")) path += "index.html";
       String contentType = httpContentType(path);
+      
+      if (!SPIFFS.begin()) {
+        return false;
+      }
+
       if(SPIFFS.exists(path)){
         File file = SPIFFS.open(path, "r");
         m_httpServer.streamFile(file, contentType);
         file.close();
+        SPIFFS.end();
         return true;
       }
+      SPIFFS.end();
       return false;
     }
 
 
     /**
-     * HTTP handle for root/index page
+     * HTTP GET root/index page
      */
-    void httpHandleRoot() {
+    void get_Root() {
       if(!handleFileRead("/index.html"))
         m_httpServer.send(404, "text/plain", "FileNotFound");
     }
 
 
     /**
-     * HTTP handle for POST
+     * HTTP POST status
      */
-    void httpHandlePOST() {
+    void post_Status() {
       StaticJsonBuffer<200> jsonBuffer;
       
       // Check if body received
@@ -85,16 +92,16 @@ class H801_HTTP {
       json.printTo(Serial1);
       Serial1.println();
 
-      const char *jsonString = m_functions->set_Status(json);
+      const char *jsonString = m_functions->set_Status("HTTP", json);
       m_httpServer.send(200, "application/json", jsonString);
       return;
     }
 
 
     /**
-     * HTTP handle for GET
+     * HTTP GET status
      */
-    void httpHandleGET() {
+    void get_Status() {
       int numArgs = 0;
 
       // Check if we have arguments
@@ -116,7 +123,7 @@ class H801_HTTP {
       json.printTo(Serial1);
       Serial1.println();
 
-      const char *jsonString = m_functions->set_Status(json);
+      const char *jsonString = m_functions->set_Status("HTTP", json);
       if (!jsonString) {
         m_httpServer.send(406, "application/json", "{ \"message\": \"Unable to update lights\"}");
       }
@@ -124,8 +131,56 @@ class H801_HTTP {
       m_httpServer.send(200, "application/json", jsonString);
     }
 
+
+    /**
+     * HTTP GET config
+     */
+    void get_Config() {
+      m_httpServer.send(200, "application/json", m_functions->get_Config());
+    }
+
+
+    /**
+     * HTTP POST config
+     */
+    void post_Config() {
+      StaticJsonBuffer<200> jsonBuffer;
+      
+      // Check if body received
+      if (m_httpServer.hasArg("plain")== false) { 
+        m_httpServer.send(200, "application/json", "{ \"message\": \"Body not received\"}");
+        return;
+      }
+
+      // Parse the json
+      JsonObject& json = jsonBuffer.parseObject(m_httpServer.arg("plain"));
+
+      // Failed to parse json
+      if (!json.success()) {
+        m_httpServer.send(406, "application/json", "{ \"message\": \"invalid JSON\"}");
+        return;
+      }
+
+      Serial1.print("HTTP POST: ");
+      json.printTo(Serial1);
+      Serial1.println();
+
+      const char *jsonString = m_functions->set_Config("HTTP", json);
+      m_httpServer.send(200, "application/json", jsonString);
+      return;
+    }
+
+    /**
+     * HTTP DELETE config
+     */
+    void delete_Config() {
+      m_functions->reset_Config();
+      m_httpServer.send(200, "application/json", "{}");
+    }
+
+
   public:
-    H801_HTTP(PH801_Functions functions) {
+    H801_HTTP(H801_Config &config, PH801_Functions functions):m_config(config) {
       m_httpServer  = ESP8266WebServer(80);
       m_httpUpdater = ESP8266HTTPUpdateServer();
 
@@ -137,23 +192,33 @@ class H801_HTTP {
      * Setup HTTP server
      * @param config Configuration
      */
-    void setup(PH801_Config config) {
-      MDNS.begin(config->HTTP.hostname);
+    void setup() {
+      MDNS.begin(getHostname());
 
       m_httpUpdater.setup(&m_httpServer);
       
       m_httpServer.on("/",           HTTP_GET, [&]() {
-        this->httpHandleRoot();
+        this->get_Root();
       });
       m_httpServer.on("/index.html", HTTP_GET, [&]() {
-        this->httpHandleRoot();
+        this->get_Root();
       });
       m_httpServer.on("/status", HTTP_GET,  [&]() {
-        this->httpHandleGET();
+        this->get_Status();
       });
       m_httpServer.on("/status", HTTP_POST, [&]() {
-        this->httpHandlePOST();
+        this->post_Status();
       });
+      m_httpServer.on("/config", HTTP_GET, [&]() {
+        this->get_Config();
+      });      
+      m_httpServer.on("/config", HTTP_POST, [&]() {
+        this->post_Config();
+      });
+      m_httpServer.on("/config", HTTP_DELETE, [&]() {
+        this->delete_Config();
+      });
+
       m_httpServer.begin();
 
       MDNS.addService("http", "tcp", 80);

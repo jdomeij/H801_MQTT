@@ -16,13 +16,11 @@
  */
 class H801_MQTT {
   private:
-    bool m_bValidConfig;
+    bool m_validConfig;
 
     PubSubClient m_mqttClient;
-    PH801_Config m_config;
+    H801_Config& m_config;
     PH801_Functions m_functions;
-
-    uint16_t m_port;
 
     char m_chipID[10];
     char m_topicButton[128];
@@ -67,13 +65,14 @@ class H801_MQTT {
 
 
         // Change event is automatically triggered so ignore response
-        m_functions->set_Status(json);
+        m_functions->set_Status("MQTT", json);
         return;
       }
     }
 
+
     /**
-     * Concatinates two string into a third one
+     * Concat two string into a third one
      * @param  dst    Destination
      * @param  dstLen Dest length
      * @param  strA   First string
@@ -88,6 +87,7 @@ class H801_MQTT {
       return offset + strlcpy(dst + offset, strB, dstLen - offset);
     }
 
+
     /**
      * Updates topic variables with new topic prefix
      * @param newTopic New topic prefix
@@ -101,18 +101,23 @@ class H801_MQTT {
 
 
   public:
-    H801_MQTT(WiFiClient &wifiClient, PH801_Functions functions) {
+    /**
+     * H801 MQTT constructor
+     * @param wifiClient WiFi client
+     * @param config     Configuration
+     * @param functions  External functions
+     */
+    H801_MQTT(WiFiClient &wifiClient, H801_Config &config, PH801_Functions functions):
+        m_config(config),
+        m_functions(functions),
+        m_lastPost(0),
+        m_lastReconnect(0),
+        m_validConfig(false) {
       m_mqttClient = PubSubClient(wifiClient);
 
       m_mqttClient.setCallback([&](char* mqttTopic, byte* mqttPayload, unsigned int mqttLength) {
         this->callback(mqttTopic, mqttPayload, mqttLength);
       });
-
-      m_functions = functions;
-
-      m_lastPost = 0;
-      m_lastReconnect = 0;
-
 
       // Create base topics
       snprintf(m_chipID, countof(m_chipID), "%08X", ESP.getChipId());
@@ -122,43 +127,47 @@ class H801_MQTT {
       m_topicSetNoAlias[0] = '\0';
 
       updateTopic(m_chipID);
-
-
-      m_bValidConfig = false;
     }
 
 
     /**
      * Set current MQTT config
-     * @param server Server address
-     * @param port   Server port
      */
-    bool setup(PH801_Config config) {
-      m_config = config;
-      if (!*m_config->MQTT.server) {
-        m_bValidConfig = false;
+    bool setup() {
+      // Ensure that we are not connected
+      if (m_mqttClient.connected()) {
+        m_mqttClient.disconnect();
+      }
+
+      // Is mqtt enabled
+      if (!*m_config.m_MQTT.server) {
+        m_validConfig = false;
         return true;
       }
 
       // Default mqtt port
-      m_port = 1883;
+      uint16_t port = 1883;
 
       // Convert mqtt_port to int, default to 1883
-      if (*m_config->MQTT.port) {
-        if ((m_port = (uint16_t)strtol(m_config->MQTT.port, NULL, 10)) == 0) {
-          m_port = 1883;
+      if (*m_config.m_MQTT.port) {
+        if ((port = (uint16_t)strtol(m_config.m_MQTT.port, NULL, 10)) == 0) {
+          port = 1883;
         }
       }
 
-      // Calculate new topics
-      if (m_config->MQTT.alias) {
-        updateTopic(m_config->MQTT.alias);
+      // Do we have custom topic
+      if (*m_config.m_MQTT.alias) {
+        updateTopic(m_config.m_MQTT.alias);
         concatTopic(m_topicSetNoAlias, countof(m_topicSetNoAlias), m_chipID, H801_MQTT_SET);
+      }
+      // Use chip ID as topic
+      else {
+        updateTopic(m_chipID);
+        m_topicSetNoAlias[0] = '\0';
       }
 
 
       Serial1.println("\nMQTT: Registered topics");
-      Serial1.printf("   %s\n", m_topicButton);
       Serial1.printf("   %s\n", m_topicButton);
       Serial1.printf("   %s\n", m_topicPing);
       Serial1.printf("   %s\n", m_topicUpdate);
@@ -168,7 +177,7 @@ class H801_MQTT {
       }
 
       // Configure server
-      m_mqttClient.setServer(m_config->MQTT.server, m_port);
+      m_mqttClient.setServer(m_config.m_MQTT.server, port);
 
       // Try to connect
       if (this->connect()) {
@@ -180,27 +189,32 @@ class H801_MQTT {
           m_mqttClient.subscribe(m_topicSetNoAlias);
         }
       }
+      else {
+        Serial1.println("MQTT: Failed to connect to server");
+      }
 
-      m_bValidConfig = true;
+      m_validConfig = true;
       return true;
     }
+
 
     /**
      * Publish config changes to MQTT
      * @param buffer New configuration
      */
     void publishConfigUpdate(const char *buffer) {
-      if (!m_bValidConfig || !m_mqttClient.connected())
+      if (!m_validConfig || !m_mqttClient.connected())
         return;
 
       m_mqttClient.publish(m_topicUpdate, buffer, false);
     }
 
+
     /**
      * Publish button press to MQTT
      */
     void publishButtonPress() {
-      if (!m_bValidConfig || !m_mqttClient.connected())
+      if (!m_validConfig || !m_mqttClient.connected())
         return;
 
       m_mqttClient.publish(m_topicButton, "{\"button\":true}", false);
@@ -246,14 +260,14 @@ class H801_MQTT {
      */
     bool connect() {
       // No password
-      if (!*m_config->MQTT.login) {
+      if (!*m_config.m_MQTT.login) {
         if (m_mqttClient.connect(m_chipID))
           return true;
       }
 
       // Password authentication
       else {
-        if (m_mqttClient.connect(m_chipID, m_config->MQTT.login, m_config->MQTT.passw))
+        if (m_mqttClient.connect(m_chipID, m_config.m_MQTT.login, m_config.m_MQTT.passw))
           return true;
       }
 
@@ -268,7 +282,7 @@ class H801_MQTT {
      * @param time current millis time
      */
     void loop(unsigned long time) {
-      if (!m_bValidConfig)
+      if (!m_validConfig)
         return;
 
       // Check if we are connected
@@ -306,7 +320,5 @@ class H801_MQTT {
         if (buffer)
           m_mqttClient.publish(m_topicPing, buffer, false);
       }
-
     }
-
 };
