@@ -45,9 +45,9 @@ By sending JSON encoded string to the `/status` page it's possible to controll t
 By doing and HTTP GET on the `/status` page and providing HTML encoded variable, example `/status?R=255&W1=0&duration=5000`, it is possible to set the values.
 
 #### HTTP Page control
-Browsing to the device it is possible to control the unit using an simple webpage
+The device has an builtin webserver that allows both controlling the PWM channels and updating the MQTT configuration.
 ![HTTP Page](./doc/http.png)
-
+![Configuration Page](./doc/config.png)
 
 ### Configuration
 #### Updating

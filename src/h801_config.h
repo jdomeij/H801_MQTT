@@ -29,9 +29,6 @@ class H801_Config {
      * @return false if failure
      */
     bool jsonToProp(const JsonVariant &json, char *dest, size_t destSize) {
-      // Clear dest at start
-      *dest = '\0';
-
       // Check for valid json object
       if (!json.success()) {
         return false;

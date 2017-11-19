@@ -1,0 +1,135 @@
+R"H801_FILE(
+<!DOCTYPE html>
+<html>
+<head>
+  <title>H801</title>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0"> 
+  <link rel="stylesheet" type="text/css" href="stylesheet.css">
+</head>
+
+<body>
+<script>
+function doPost() {
+  var data = {};
+  ['R', 'G', 'B', 'W1', 'W2', 'duration'].forEach(function(item) {
+    data[item] = document.getElementById(item + '_val').value;
+  })
+
+  var request = new XMLHttpRequest();
+  request.open('POST', '/status', true);
+  request.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded; charset=UTF-8');
+  request.error = function() { }
+  request.onload = function() { };
+  request.send(JSON.stringify(data));
+}
+
+function doRefresh() {
+  var request = new XMLHttpRequest(); 
+  request.open('GET', '/status', true);
+  request.error = function() {
+  }
+
+  request.onload = function() {
+    if (this.status < 200 && this.status >= 400) {
+      return;
+    }
+    var data = JSON.parse(this.response);
+    Object.keys(data).forEach(function(prop) {
+      var dom = document.getElementById(prop + '_txt');
+      if (dom)
+        dom.innerHTML = ''+data[prop];
+      dom = document.getElementById(prop + '_val');
+      // Don't update active slider
+      if (dom && dom != document.activeElement)
+        dom.value = ''+data[prop];
+    });
+  };
+  request.send();
+}
+
+function sliderChange(item) {
+  var domValue = document.getElementById(item + '_val');
+  var domTxt   = document.getElementById(item + '_txt');
+  
+  if (!domTxt)
+    ; // Ignore
+  else if (!domValue)
+    domTxt.innerHTML = "N/A ";
+  else if (item == 'duration')
+    domTxt.innerHTML = parseInt(domValue.value, 10) / 1000;
+  else
+    domTxt.innerHTML = domValue.value;
+}
+
+</script>
+
+<form id="H801">
+  <div class="title">
+    <label>H801 PWM Control</label>
+    <a class="tooltip" href="./config.html">&#9881;<span>H801 Configuration</span></a>
+  </div>
+  <div class="container">
+    <div id="inputValues">
+      <div>
+        <label>R:</label>
+        <input type="range" id="R_val"  min="0" value="0" max="255" step="1" oninput="sliderChange('R');" 
+               onchange="sliderChange('R');" style="background: linear-gradient(to right, #000, #f00);">
+        <span class="result" id="R_txt">0</span>
+      </div>
+      <div>
+        <label>G:</label>
+        <input type="range" id="G_val"  min="0" value="0" max="255" step="1" oninput="sliderChange('G');" 
+               onchange="sliderChange('G');" style="background: linear-gradient(to right, #000, #0f0);">
+        <span class="result" id="G_txt">0</span>
+      </div>
+      <div>
+        <label>B:</label>
+        <input type="range" id="B_val"  min="0" value="0" max="255" step="1" oninput="sliderChange('B');"  
+               onchange="sliderChange('B');" style="background: linear-gradient(to right, #000, #00f);">
+        <span class="result" id="B_txt">0</span>
+      </div>
+      <div>
+        <label>W1:</label>
+        <input type="range" id="W1_val"  min="0" value="0" max="255" step="1" oninput="sliderChange('W1');" 
+               onchange="sliderChange('W1');" style="background: linear-gradient(to right, #000, #fff);">
+        <span class="result" id="W1_txt">0</span>
+      </div>
+      <div>
+        <label>W2:</label>
+        <input type="range" id="W2_val"  min="0" value="0" max="255" step="1" oninput="sliderChange('W2');" 
+               onchange="sliderChange('W2');" style="background: linear-gradient(to right, #000, #fff);">
+        <span class="result" id="W2_txt">0</span>
+      </div>
+      <br>
+      <div>
+        <label>Fade:</label>
+        <input type="range" id="duration_val" min="0" value="0" step="100" max="60000" step="1" oninput="sliderChange('duration');" 
+               onchange="sliderChange('duration');" style="background-color: #aaa;">
+        <span class="result"><span id="duration_txt">0</span>s</span>
+      </div>
+    </div>
+    <br>
+    <div class="buttons">
+      <input type="button" onclick="doRefresh()" class="btnRefresh" value="Get Current">
+      <input type="button" onclick="doPost()"    class="btnPost" value="Set Values">
+    </div>
+  </div>
+</form>
+
+<script>
+  // Update numbers
+  sliderChange('R');
+  sliderChange('G');
+  sliderChange('B');
+  sliderChange('W1');
+  sliderChange('W2');
+  sliderChange('duration');
+
+  // Fetch current values
+  setTimeout(doRefresh, 500);
+</script>
+
+</body>
+)H801_FILE"

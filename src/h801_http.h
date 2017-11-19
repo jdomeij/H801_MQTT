@@ -1,4 +1,16 @@
 
+const PROGMEM char * s_htmlStylesheet = 
+  #include "http/stylesheet.css"
+;
+
+const PROGMEM char * s_htmlIndex =
+  #include "http/index.html"
+;
+
+const PROGMEM char * s_htmlConfig = 
+  #include "http/config.html"
+;
+
 
 class H801_HTTP {
   private:
@@ -7,60 +19,20 @@ class H801_HTTP {
     H801_Config &m_config;
     PH801_Functions m_functions;
 
-    /**
-     * Determine content type by file extension
-     * @param  filename  File to get conent type for
-     * @return Content type string
-     */
-    String httpContentType(String filename){
-           if(filename.endsWith(".htm")) return "text/html";
-      else if(filename.endsWith(".html")) return "text/html";
-      else if(filename.endsWith(".css")) return "text/css";
-      else if(filename.endsWith(".js"))  return "application/javascript";
-      else if(filename.endsWith(".png")) return "image/png";
-      else if(filename.endsWith(".gif")) return "image/gif";
-      else if(filename.endsWith(".jpg")) return "image/jpeg";
-      else if(filename.endsWith(".ico")) return "image/x-icon";
-      else if(filename.endsWith(".xml")) return "text/xml";
-      else if(filename.endsWith(".pdf")) return "application/x-pdf";
-      else if(filename.endsWith(".zip")) return "application/x-zip";
-      else if(filename.endsWith(".gz")) return "application/x-gzip";
-      return "text/plain";
-    }
-
-    /**
-     * Stream file from SPIFFS to HTTP client
-     * @param  path   File to serve
-     * @return false  If unable to find file
-     *         true   If able to send file to client
-     */
-    bool handleFileRead(String path){
-      Serial1.printf("handleFileRead: %s\n", path.c_str());
-      if(path.endsWith("/")) path += "index.html";
-      String contentType = httpContentType(path);
-      
-      if (!SPIFFS.begin()) {
-        return false;
-      }
-
-      if(SPIFFS.exists(path)){
-        File file = SPIFFS.open(path, "r");
-        m_httpServer.streamFile(file, contentType);
-        file.close();
-        SPIFFS.end();
-        return true;
-      }
-      SPIFFS.end();
-      return false;
-    }
-
 
     /**
      * HTTP GET root/index page
      */
-    void get_Root() {
-      if(!handleFileRead("/index.html"))
-        m_httpServer.send(404, "text/plain", "FileNotFound");
+    void html_Index() {
+      m_httpServer.send(200, "text/html", s_htmlIndex);
+    }
+
+    void html_Config() {
+      m_httpServer.send(200, "text/html", s_htmlConfig);
+    }
+
+    void html_Stylesheet() {
+      m_httpServer.send(200, "text/css", s_htmlStylesheet);
     }
 
 
@@ -198,10 +170,16 @@ class H801_HTTP {
       m_httpUpdater.setup(&m_httpServer);
       
       m_httpServer.on("/",           HTTP_GET, [&]() {
-        this->get_Root();
+        this->html_Index();
       });
       m_httpServer.on("/index.html", HTTP_GET, [&]() {
-        this->get_Root();
+        this->html_Index();
+      });
+      m_httpServer.on("/config.html", HTTP_GET, [&]() {
+        this->html_Config();
+      });
+      m_httpServer.on("/stylesheet.css", HTTP_GET, [&]() {
+        this->html_Stylesheet();
       });
       m_httpServer.on("/status", HTTP_GET,  [&]() {
         this->get_Status();
