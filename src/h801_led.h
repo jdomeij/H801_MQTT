@@ -14,13 +14,18 @@ static_assert(countof(s_gammaTable) == 1024, "Gamma-table countof must be 1024")
 class H801_Led {
 private:
   String   m_id;
-  uint8_t  m_pwm_index;
   uint16_t m_bri;
 
   double    m_fadeBri;
   double    m_fadeStep;
   uint32_t  m_fadeNum;
-  uint32_t  m_pwmInfo[3];
+
+  uint8_t  m_pwm_index;
+  struct {
+    uint32_t mux;
+    uint32_t func;
+    uint32_t num;
+  } m_pwm_pin;
 
 public:
   /**
@@ -32,13 +37,15 @@ public:
    * @param pin_num   pin number
    */
   H801_Led(String id, uint8_t pwm_index, uint32_t pin_mux, uint32_t pin_func, uint32_t pin_num):
-      m_pwmInfo{pin_mux, pin_func, pin_num},
+      m_pwm_pin{.mux = pin_mux, .func = pin_func, .num = pin_num},
       m_id(id),
       m_pwm_index(pwm_index),
       m_bri(0),
       m_fadeBri(0),
       m_fadeStep(0),
       m_fadeNum(0) {
+    pinMode(pin_num, OUTPUT);
+    digitalWrite(pin_num, 0);
   }
 
   /**
@@ -46,7 +53,9 @@ public:
    * @param pwm_io_info  Destionation to copy information
    */
   void get_IO(uint32_t pwm_io_info[3]) {
-    memcpy(pwm_io_info, m_pwmInfo, sizeof(m_pwmInfo));
+    pwm_io_info[0] = m_pwm_pin.mux;
+    pwm_io_info[1] = m_pwm_pin.func;
+    pwm_io_info[2] = m_pwm_pin.num;
   }
 
   /**

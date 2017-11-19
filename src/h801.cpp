@@ -137,7 +137,7 @@ void setup() {
   }
 
   // Init pwm and start it
-  pwm_init(h801_pwm_period, h801_pwm_initval, countof(h801_pwm_io_info), h801_pwm_io_info);
+  pwm_init(h801_pwm_period, h801_pwm_initval, countof(LedStatus), h801_pwm_io_info);
   pwm_start();
 
   // red: off, green: on
