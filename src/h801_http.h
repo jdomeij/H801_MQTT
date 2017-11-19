@@ -24,14 +24,17 @@ class H801_HTTP {
      * HTTP GET root/index page
      */
     void html_Index() {
+      m_httpServer.sendHeader("Cache-Control", "max-age=86400");
       m_httpServer.send(200, "text/html", s_htmlIndex);
     }
 
     void html_Config() {
+      m_httpServer.sendHeader("Cache-Control", "max-age=86400");
       m_httpServer.send(200, "text/html", s_htmlConfig);
     }
 
     void html_Stylesheet() {
+      m_httpServer.sendHeader("Cache-Control", "max-age=86400");
       m_httpServer.send(200, "text/css", s_htmlStylesheet);
     }
 
