@@ -43,6 +43,10 @@ class H801_Config {
       if (!tmp)
         return false;
 
+      // Ignore same value
+      if (!strcmp(dest, tmp))
+        return false;
+
       // And update the value
       strlcpy(dest, tmp, destSize);
       return true;
@@ -100,18 +104,19 @@ class H801_Config {
   /**
    * TODO: Set current configuration
    * @param  json New configuration
-   * @return Current configuration
+   * @return Was any value modified
    */
-    const char* set(JsonObject& json) {
+  bool set(JsonObject& json) {
 
-    jsonToProp(json["mqtt_server"], m_MQTT.server,  countof(m_MQTT.server));
-    jsonToProp(json["mqtt_port"],   m_MQTT.port,    countof(m_MQTT.port));
-    jsonToProp(json["mqtt_alias"],  m_MQTT.alias,   countof(m_MQTT.alias));
-    jsonToProp(json["mqtt_login"],  m_MQTT.login,   countof(m_MQTT.login));
-    jsonToProp(json["mqtt_passw"],  m_MQTT.passw,   countof(m_MQTT.passw));
+    bool isModified = false;
 
-    // Return config with no password
-    return this->toJSONString(true);
+    isModified = jsonToProp(json["mqtt_server"], m_MQTT.server,  countof(m_MQTT.server)) || isModified;
+    isModified = jsonToProp(json["mqtt_port"],   m_MQTT.port,    countof(m_MQTT.port)) || isModified;
+    isModified = jsonToProp(json["mqtt_alias"],  m_MQTT.alias,   countof(m_MQTT.alias)) || isModified;
+    isModified = jsonToProp(json["mqtt_login"],  m_MQTT.login,   countof(m_MQTT.login)) || isModified;
+    isModified = jsonToProp(json["mqtt_passw"],  m_MQTT.passw,   countof(m_MQTT.passw)) || isModified;
+
+    return isModified;
   }
 
 

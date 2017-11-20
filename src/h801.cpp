@@ -266,7 +266,7 @@ void loop() {
     digitalWrite(H801_LED_PIN_G, false);
   }
 
-  // Button pressed for 500ms
+  // Button pressed for 700ms
   if (gpioCount >= 700 && buttonInit) {
     // First time we enter
     if (gpioCount == 700) {
@@ -645,10 +645,17 @@ const char *funcSetConfig(const char* eventSource, JsonObject& json) {
   // Print event source
   Serial1.printf("Config: Update from %s\n", eventSource);
 
-  s_config.set(json);
-
-  // Re-setup mqtt client with new info
-  s_mqttClient.setup();
+  // Set config, returns true if changed
+  if (s_config.set(json)) {
+    // Save config
+    s_config.save();
+    
+    // Re-setup mqtt client with new info
+    s_mqttClient.setup();
+  }
+  else {
+    Serial1.println("Config: No changes");
+  }
 
   // Return config with no password
   return s_config.toJSONString(true);
