@@ -183,8 +183,9 @@ public:
   /**
    * Overrides current fade and fades single step,
    * @param dirUp Are we fading toward max
+   * @return Are we still fading
    */
-  void do_ButtonFade(bool dirUp) {
+  bool do_ButtonFade(bool dirUp) {
     m_fadeBri = 0;
     m_fadeStep = 0;
     m_fadeNum = 0;
@@ -194,11 +195,15 @@ public:
     if (dirUp)
       newBri = m_bri + 5;
     else
-      newBri = m_bri -= 5;
+      newBri = m_bri - 5;
+    
     m_bri = constrain(newBri, 0x0, 0x3FF);
 
     // Update light
     pwm_set_duty(s_gammaTable[m_bri], m_pwm_index);
+
+    // Have we reached the endpoints
+    return m_bri != (dirUp ? 0x3FF : 0x0);
   }
 };
 

@@ -246,6 +246,8 @@ void loop() {
   else if (gpioCount < 700) {
     // Clear counter
     gpioCount = 0;
+
+    Serial1.println("Button pressed: click");
     s_mqttClient.publishButtonPress();
   }
 
@@ -266,10 +268,12 @@ void loop() {
     digitalWrite(H801_LED_PIN_G, false);
   }
 
+
   // Button pressed for 700ms
   if (gpioCount >= 700 && buttonInit) {
     // First time we enter
     if (gpioCount == 700) {
+      s_isFading = true;
       buttonFadeDirUp = !buttonFadeDirUp;
       Serial1.printf("Button pressed: fading %s\n", buttonFadeDirUp? "up":"down");
     }
@@ -277,13 +281,20 @@ void loop() {
     if (time >= lastFade + (100/H801_DURATION_FADE_STEPS) || time < lastFade) {
       lastFade = time;
       fadingLedIndex++;
-      digitalWrite(H801_LED_PIN_G, (fadingLedIndex & 0x7) != 0x7);
 
-      // For each led
-      for (H801_Led& led : LedStatus) {
-        led.do_ButtonFade(buttonFadeDirUp);
+      if (s_isFading) {
+        digitalWrite(H801_LED_PIN_G, (fadingLedIndex & 0x7) != 0x7);
+
+        s_isFading = false;
+        // For each led
+        for (H801_Led& led : LedStatus) {
+          s_isFading = led.do_ButtonFade(buttonFadeDirUp) || s_isFading;
+        }
+        pwm_start();
       }
-      pwm_start();
+      else {
+        digitalWrite(H801_LED_PIN_G, false);
+      }
     }
     // Ensure that gpioCount don't overflow
     gpioCount = 0x0FFFFFFF;
@@ -296,8 +307,7 @@ void loop() {
 
     // Fade each light
     for (H801_Led& led : LedStatus) {
-      if (led.do_Fade())
-        s_isFading = true;
+      s_isFading = led.do_Fade() || s_isFading;
     }
 
     // Blink leds during fading, ensure led is green when done
