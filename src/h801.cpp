@@ -1,5 +1,5 @@
 
-#include <FS.h> //this needs to be first, or it all crashes and burns...
+#include <FS.h>
 
 #include <string>
 
@@ -110,6 +110,8 @@ H801_Led LedStatus[] = {
   H801_Led("W2",  4, PERIPHS_IO_MUX_GPIO4_U, FUNC_GPIO4,   4)
 };
 
+// Array with all leds to fade on button press
+H801_Led* LedButtonFade[countof(LedStatus)] = {0};
 
 /**
  * Setup H801 and connect to the WiFi
@@ -139,6 +141,7 @@ void setup() {
   // Init pwm and start it
   pwm_init(h801_pwm_period, h801_pwm_initval, countof(LedStatus), h801_pwm_io_info);
   pwm_start();
+
 
   // red: off, green: on
   digitalWrite(H801_LED_PIN_R, 1);
@@ -190,6 +193,13 @@ void setup() {
   if (s_shouldSaveConfig) {
     s_config.save();
   }
+
+  // Setup button fading
+  LedButtonFade[0] = s_config.m_ButtonFade.R ? &LedStatus[0] : NULL;
+  LedButtonFade[1] = s_config.m_ButtonFade.G ? &LedStatus[1] : NULL;
+  LedButtonFade[2] = s_config.m_ButtonFade.B ? &LedStatus[2] : NULL;
+  LedButtonFade[3] = s_config.m_ButtonFade.W1 ? &LedStatus[3] : NULL;
+  LedButtonFade[4] = s_config.m_ButtonFade.W2 ? &LedStatus[4] : NULL;
 
   // Green light on
   digitalWrite(H801_LED_PIN_G, false);
@@ -287,8 +297,9 @@ void loop() {
 
         s_isFading = false;
         // For each led
-        for (H801_Led& led : LedStatus) {
-          s_isFading = led.do_ButtonFade(buttonFadeDirUp) || s_isFading;
+        for (H801_Led* led : LedButtonFade) {
+          if (led)
+            s_isFading = led->do_ButtonFade(buttonFadeDirUp) || s_isFading;
         }
         pwm_start();
       }
@@ -426,6 +437,7 @@ void startWifiManager(bool resetWifiSettings) {
   }
 }
 
+
 /**
  * Prints system and SPIFFS information
  */
@@ -445,12 +457,6 @@ void printSystemInfo(void) {
   
   if (SPIFFS.begin()) {
     Serial1.println("\nSPIFFS: Information");
-    FSInfo fs_info;
-    if (SPIFFS.info(fs_info)) {
-      Serial1.printf("%20s: %ukb (%u)\n", "Used", fs_info.usedBytes>>10, fs_info.usedBytes);
-      Serial1.printf("%20s: %ukb (%u)\n", "Total", fs_info.totalBytes>>10, fs_info.totalBytes);
-    }
-
     Dir dir = SPIFFS.openDir("");
     while (dir.next()) {
       File f = dir.openFile("r");
@@ -459,6 +465,17 @@ void printSystemInfo(void) {
         f.close();
       }
     }
+
+    FSInfo fs_info;
+    if (SPIFFS.info(fs_info)) {
+      Serial1.println("-----------------------");
+      Serial1.printf("%20s: %ukb (%u)\n", "Used space", fs_info.usedBytes>>10, fs_info.usedBytes);
+      Serial1.printf("%20s: %ukb (%u)\n", "Free space",
+                     (fs_info.totalBytes - fs_info.usedBytes)>>10, 
+                     (fs_info.totalBytes - fs_info.usedBytes));
+      Serial1.println("");
+    }
+
 
     SPIFFS.end();
   }
@@ -536,8 +553,9 @@ bool jsonToLight(JsonObject& json, unsigned long fadeTime) {
  */
 const char * statusToJSONString(const char *eventSource, unsigned long fadeTime) {
   static char buffer[1024];
+  static StaticJsonBuffer<1024> jsonBuffer;
 
-  StaticJsonBuffer<200> jsonBuffer;
+  jsonBuffer.clear();
   JsonObject& root = jsonBuffer.createObject();
 
   if (fadeTime)
@@ -660,6 +678,13 @@ const char *funcSetConfig(const char* eventSource, JsonObject& json) {
     // Save config
     s_config.save();
     
+    // Update button fading
+    LedButtonFade[0] = s_config.m_ButtonFade.R ? &LedStatus[0] : NULL;
+    LedButtonFade[1] = s_config.m_ButtonFade.G ? &LedStatus[1] : NULL;
+    LedButtonFade[2] = s_config.m_ButtonFade.B ? &LedStatus[2] : NULL;
+    LedButtonFade[3] = s_config.m_ButtonFade.W1 ? &LedStatus[3] : NULL;
+    LedButtonFade[4] = s_config.m_ButtonFade.W2 ? &LedStatus[4] : NULL;
+    
     // Re-setup mqtt client with new info
     s_mqttClient.setup();
   }
@@ -699,6 +724,10 @@ void funcResetConfirmTimeout() {
 
   // Clear config
   s_config.remove();
+
+  // Create new wifimanager and tell it to clear config
+  WiFiManager wifiManager;
+  wifiManager.resetSettings();
 
   delay(3000);
 

@@ -4,7 +4,7 @@
 #define H801_MQTT_PING   "/ping"
 #define H801_MQTT_SET    "/set"
 #define H801_MQTT_UPDATE "/updated"
-#define H801_MQTT_BUTTON "/button"
+#define H801_MQTT_EVENT  "/event"
 
 
 // Interval between each ping
@@ -17,13 +17,14 @@
 class H801_MQTT {
   private:
     bool m_validConfig;
+    bool m_connected;
 
     PubSubClient m_mqttClient;
     H801_Config& m_config;
     PH801_Functions m_functions;
 
     char m_chipID[10];
-    char m_topicButton[128];
+    char m_topicEvent[128];
     char m_topicPing[128];
     char m_topicSet[128];
     char m_topicUpdate[128];
@@ -39,7 +40,7 @@ class H801_MQTT {
      * @param mqttLength  Data length
      */
     void callback(char* mqttTopic, byte* mqttPayload, unsigned int mqttLength) {
-      static char payload[200];
+      static char payload[1024];
       if (mqttLength >= countof(payload))
         return;
       
@@ -93,7 +94,7 @@ class H801_MQTT {
      * @param newTopic New topic prefix
      */
     void updateTopic(const char *newTopic) {
-      concatTopic(m_topicButton, countof(m_topicButton), newTopic, H801_MQTT_BUTTON);
+      concatTopic(m_topicEvent,  countof(m_topicEvent),  newTopic, H801_MQTT_EVENT);
       concatTopic(m_topicPing,   countof(m_topicPing),   newTopic, H801_MQTT_PING);
       concatTopic(m_topicUpdate, countof(m_topicUpdate), newTopic, H801_MQTT_UPDATE);
       concatTopic(m_topicSet,    countof(m_topicSet),    newTopic, H801_MQTT_SET);
@@ -112,9 +113,11 @@ class H801_MQTT {
         m_functions(functions),
         m_lastPost(0),
         m_lastReconnect(0),
-        m_validConfig(false) {
-      m_mqttClient = PubSubClient(wifiClient);
+        m_validConfig(false),
+        m_connected(false),
+        m_mqttClient(wifiClient) {
 
+      // Setup message callback
       m_mqttClient.setCallback([&](char* mqttTopic, byte* mqttPayload, unsigned int mqttLength) {
         this->callback(mqttTopic, mqttPayload, mqttLength);
       });
@@ -135,7 +138,8 @@ class H801_MQTT {
      */
     bool setup() {
       // Ensure that we are not connected
-      if (m_mqttClient.connected()) {
+      if (m_connected) {
+        m_connected = false;
         m_mqttClient.disconnect();
       }
 
@@ -168,7 +172,7 @@ class H801_MQTT {
 
 
       Serial1.println("\nMQTT: Registered topics");
-      Serial1.printf("   %s\n", m_topicButton);
+      Serial1.printf("   %s\n", m_topicEvent);
       Serial1.printf("   %s\n", m_topicPing);
       Serial1.printf("   %s\n", m_topicUpdate);
       Serial1.printf("   %s\n", m_topicSet);
@@ -180,7 +184,11 @@ class H801_MQTT {
       m_mqttClient.setServer(m_config.m_MQTT.server, port);
 
       // Try to connect
-      if (this->connect()) {
+      m_connected = this->connect();
+
+      // Are we connected
+      if (m_connected) {
+
         // Always listen to the <id>/set topic
         m_mqttClient.subscribe(m_topicSet);
 
@@ -188,6 +196,8 @@ class H801_MQTT {
         if (*m_topicSetNoAlias) {
           m_mqttClient.subscribe(m_topicSetNoAlias);
         }
+
+        m_mqttClient.publish(m_topicEvent, "{\"event\": \"online\"}");
       }
       else {
         Serial1.println("MQTT: Failed to connect to server");
@@ -203,7 +213,7 @@ class H801_MQTT {
      * @param buffer New configuration
      */
     void publishConfigUpdate(const char *buffer) {
-      if (!m_validConfig || !m_mqttClient.connected())
+      if (!m_validConfig || !m_connected)
         return;
 
       m_mqttClient.publish(m_topicUpdate, buffer, false);
@@ -214,10 +224,10 @@ class H801_MQTT {
      * Publish button press to MQTT
      */
     void publishButtonPress() {
-      if (!m_validConfig || !m_mqttClient.connected())
+      if (!m_validConfig || !m_connected)
         return;
 
-      m_mqttClient.publish(m_topicButton, "{\"button\":true}", false);
+      m_mqttClient.publish(m_topicEvent, "{\"event\":\"button\"}", false);
     }
 
     /**
@@ -259,21 +269,25 @@ class H801_MQTT {
      * @return false if failed to connect to server
      */
     bool connect() {
+      Serial1.println("MQTT: Reconnect");
+
       // No password
       if (!*m_config.m_MQTT.login) {
-        if (m_mqttClient.connect(m_chipID))
-          return true;
+        m_connected = m_mqttClient.connect(m_chipID, m_topicEvent, 0, false, "{\"event\": \"offline\"}");
       }
 
       // Password authentication
       else {
-        if (m_mqttClient.connect(m_chipID, m_config.m_MQTT.login, m_config.m_MQTT.passw))
-          return true;
+        m_connected = m_mqttClient.connect(m_chipID, m_config.m_MQTT.login, m_config.m_MQTT.passw, 
+                                           m_topicEvent, 0, false, "{\"event\": \"offline\"}");
       }
 
-      // Failed to connect
-      Serial1.printf("MQTT: connect failed, state: %d (%s)", m_mqttClient.state(), this->getConnectStateInfo(m_mqttClient.state()));
-      return false;
+      if (!m_connected) {
+        // Failed to connect
+        Serial1.printf("MQTT: connect failed, state: %d (%s)\n", m_mqttClient.state(), this->getConnectStateInfo(m_mqttClient.state()));
+        m_lastReconnect = millis();
+      }
+      return m_connected;
     }
 
 
@@ -285,29 +299,37 @@ class H801_MQTT {
       if (!m_validConfig)
         return;
 
-      // Check if we are connected
-      if (m_mqttClient.connected())
-        ; // Ignore
-
       // Waiting period for next re-connect
-      else if (time > m_lastReconnect && time < m_lastReconnect + 5000) {
+      if (m_lastReconnect != 0 && time - m_lastReconnect < 20000) {
         return;
       }
 
-      // Attempt to re-connect
+      // Check if we connected
+      else if (m_mqttClient.connected()) {
+        m_lastReconnect = 0;
+        m_connected = true;        
+      }
+
+      // Try to re-connect
       else if (!this->connect()) {
-        Serial1.println("MQTT: re-trying again in 5s");        
         m_lastReconnect = time;
+        m_connected = false;
+
+        Serial1.println("MQTT: re-trying again in 20s");  
         return;
       }
 
       // Connected
       else {
+        m_lastReconnect = 0;
+        m_connected = true;
+
         Serial1.println("MQTT: Connected");
         m_mqttClient.subscribe(m_topicSet);
         if (*m_topicSetNoAlias) {
           m_mqttClient.subscribe(m_topicSetNoAlias);
         }
+        m_mqttClient.publish(m_topicEvent, "{\"event\": \"online\"}");
       }
 
       m_mqttClient.loop();

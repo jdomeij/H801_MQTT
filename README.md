@@ -47,6 +47,7 @@ By doing and HTTP GET on the `/status` page and providing HTML encoded variable,
 #### HTTP Page control
 The device has an builtin webserver that allows both controlling the PWM channels and updating the MQTT configuration.
 ![HTTP Page](./doc/http.png)
+![Color Picker](./doc/color.png)
 ![Configuration Page](./doc/config.png)
 
 ### Configuration

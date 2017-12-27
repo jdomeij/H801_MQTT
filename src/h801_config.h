@@ -8,6 +8,7 @@
  */
 class H801_Config {
   public:
+    StaticJsonBuffer<1024> m_jsonBuffer;
 
     // MQTT config
     struct {
@@ -20,15 +21,23 @@ class H801_Config {
       char passw[128];
     } m_MQTT;
 
+    struct {
+      bool R;
+      bool G;
+      bool B;
+      bool W1;
+      bool W2;
+    } m_ButtonFade;
+
   private:
     /**
      * Copy json variable to string buffer if valid
      * @param  json     JSON value
      * @param  dest     dest buffer
      * @param  destSize dest buffer len
-     * @return false if failure
+     * @return false if failure or unchanged
      */
-    bool jsonToProp(const JsonVariant &json, char *dest, size_t destSize) {
+    bool jsonToStringProp(const JsonVariant &json, char *dest, size_t destSize) {
       // Check for valid json object
       if (!json.success()) {
         return false;
@@ -52,6 +61,87 @@ class H801_Config {
       return true;
     }
 
+    /**
+     * Copy json variable to string buffer if valid and not hidden password
+     * @param  json     JSON value
+     * @param  dest     dest buffer
+     * @param  destSize dest buffer len
+     * @return false if failure or unchanged
+     */
+    bool jsonToPasswProp(const JsonVariant &json, char *dest, size_t destSize) {
+      // Check for valid json object
+      if (!json.success()) {
+        return false;
+      }
+
+      // Check type
+      if (!json.is<char *>())
+        return false;
+
+      // Get value
+      const char *tmp = json.as<const char *>();
+      if (!tmp)
+        return false;
+
+      // Ignore same value
+      if (!strcmp(dest, tmp))
+        return false;
+
+      // Dummy password
+      if (!strcmp(tmp, "*********"))
+        return false;
+
+      // And update the value
+      strlcpy(dest, tmp, destSize);
+      return true;
+    }
+
+    /**
+     * Copy json variable to bool value if valid
+     * @param  json     JSON value
+     * @param  dest     dest variable
+     * @return false if failure or unchanged
+     */
+    bool jsonToBoolProp(const JsonVariant &json, bool *dest) {
+      // Check for valid json object
+      if (!json.success()) {
+        return false;
+      }
+
+      // Remember old value
+      bool oldValue = *dest;
+
+      // Number
+      if (json.is<signed long>())
+        *dest = (json.as<signed long>() != 0);
+      
+      // Boolean
+      else if (json.is<bool>())
+        *dest = json.as<bool>();
+
+      // String (true|false|1|0)
+      else if (json.is<const char*>()) {
+        const char *val = json.as<const char*>();
+
+        if (!strcmp(val, "true"))
+          *dest = true;
+        else if (!strcmp(val, "1"))
+          *dest = true;
+        else if (!strcmp(val, "false"))
+          *dest = false;
+        else if (!strcmp(val, "0"))
+          *dest = false;
+        else
+          return false;
+      }
+      else
+        return false;
+      
+      return *dest == oldValue;
+    }
+
+
+
   public:
     /**
      * H801 Configuration object
@@ -66,6 +156,12 @@ class H801_Config {
      */
     void clear(void) {
       memset(&m_MQTT, 0, sizeof(m_MQTT));
+
+      m_ButtonFade.R = true;
+      m_ButtonFade.G = true;
+      m_ButtonFade.B = true;
+      m_ButtonFade.W1 = true;
+      m_ButtonFade.W2 = true;
     }
 
 
@@ -77,26 +173,35 @@ class H801_Config {
     char * toJSONString(bool hidePassword) {
       static char buffer[1024];
 
-      StaticJsonBuffer<200> jsonBuffer;
-      JsonObject& root = jsonBuffer.createObject();
+      m_jsonBuffer.clear();
+      JsonObject& json = m_jsonBuffer.createObject();
 
-      root["mqtt_server"] = m_MQTT.server;
-      root["mqtt_port"]   = m_MQTT.port;
+      json["mqtt_server"] = m_MQTT.server;
+      json["mqtt_port"]   = m_MQTT.port;
 
-      root["mqtt_alias"]  = m_MQTT.alias;
+      json["mqtt_alias"]  = m_MQTT.alias;
 
-      root["mqtt_login"]  = m_MQTT.login;
+      json["mqtt_login"]  = m_MQTT.login;
       
       // Output empty string if password is empty
       if (!hidePassword || !*m_MQTT.passw) {
-        root["mqtt_passw"]  = m_MQTT.passw;
+        json["mqtt_passw"]  = m_MQTT.passw;
       }
       else {
-        root["mqtt_passw"]  = "*********";
+        json["mqtt_passw"]  = "*********";
       }
 
+
+      // Button fading
+      JsonObject& buttonFade = json.createNestedObject("button_fade");
+      buttonFade["R"]  = m_ButtonFade.R;
+      buttonFade["G"]  = m_ButtonFade.G;
+      buttonFade["B"]  = m_ButtonFade.B;
+      buttonFade["W1"] = m_ButtonFade.W1;
+      buttonFade["W2"] = m_ButtonFade.W2;
+
       // Serialize JSON
-      root.printTo(buffer, sizeof(buffer));
+      json.printTo(buffer, sizeof(buffer));
       return buffer;
     }
 
@@ -110,12 +215,21 @@ class H801_Config {
 
     bool isModified = false;
 
-    isModified = jsonToProp(json["mqtt_server"], m_MQTT.server,  countof(m_MQTT.server)) || isModified;
-    isModified = jsonToProp(json["mqtt_port"],   m_MQTT.port,    countof(m_MQTT.port)) || isModified;
-    isModified = jsonToProp(json["mqtt_alias"],  m_MQTT.alias,   countof(m_MQTT.alias)) || isModified;
-    isModified = jsonToProp(json["mqtt_login"],  m_MQTT.login,   countof(m_MQTT.login)) || isModified;
-    isModified = jsonToProp(json["mqtt_passw"],  m_MQTT.passw,   countof(m_MQTT.passw)) || isModified;
+    isModified = jsonToStringProp(json["mqtt_server"], m_MQTT.server,  countof(m_MQTT.server)) || isModified;
+    isModified = jsonToStringProp(json["mqtt_port"],   m_MQTT.port,    countof(m_MQTT.port))   || isModified;
+    isModified = jsonToStringProp(json["mqtt_alias"],  m_MQTT.alias,   countof(m_MQTT.alias))  || isModified;
+    isModified = jsonToStringProp(json["mqtt_login"],  m_MQTT.login,   countof(m_MQTT.login))  || isModified;
+    isModified = jsonToStringProp(json["mqtt_passw"],  m_MQTT.passw,   countof(m_MQTT.passw))  || isModified;
 
+
+    JsonObject& buttonFade = json["button_fade"];
+    if (buttonFade.success()) {
+      isModified = jsonToBoolProp(buttonFade["R"],  &m_ButtonFade.R)  || isModified;
+      isModified = jsonToBoolProp(buttonFade["G"],  &m_ButtonFade.G)  || isModified;
+      isModified = jsonToBoolProp(buttonFade["B"],  &m_ButtonFade.B)  || isModified;
+      isModified = jsonToBoolProp(buttonFade["W1"], &m_ButtonFade.W1) || isModified;
+      isModified = jsonToBoolProp(buttonFade["W2"], &m_ButtonFade.W2) || isModified;
+    }
     return isModified;
   }
 
@@ -190,8 +304,9 @@ class H801_Config {
     std::unique_ptr<char[]> buf(new char[size]);
 
     configFile.readBytes(buf.get(), size);
-    DynamicJsonBuffer jsonBuffer;
-    JsonObject& json = jsonBuffer.parseObject(buf.get());
+
+    m_jsonBuffer.clear();
+    JsonObject& json = m_jsonBuffer.parseObject(buf.get());
 
     // Close file and filesystem
     configFile.close();
@@ -207,11 +322,7 @@ class H801_Config {
     json.printTo(Serial1);
     Serial1.println("");
 
-    jsonToProp(json["mqtt_server"], m_MQTT.server,  countof(m_MQTT.server));
-    jsonToProp(json["mqtt_port"],   m_MQTT.port,    countof(m_MQTT.port));
-    jsonToProp(json["mqtt_alias"],  m_MQTT.alias,   countof(m_MQTT.alias));
-    jsonToProp(json["mqtt_login"],  m_MQTT.login,   countof(m_MQTT.login));
-    jsonToProp(json["mqtt_passw"],  m_MQTT.passw,   countof(m_MQTT.passw));
+    this->set(json);
 
     return true;
   }
@@ -228,9 +339,5 @@ class H801_Config {
     else {
       Serial1.println("Config: failed to mount FS");
     }
-
-    // Create new wifimanager and tell it to clear config
-    WiFiManager wifiManager;
-    wifiManager.resetSettings();
   }
 };

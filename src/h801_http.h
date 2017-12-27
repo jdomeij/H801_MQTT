@@ -1,41 +1,44 @@
 
-const PROGMEM char * s_htmlStylesheet = 
-  #include "http/stylesheet.css"
-;
-
-const PROGMEM char * s_htmlIndex =
-  #include "http/index.html"
-;
-
-const PROGMEM char * s_htmlConfig = 
-  #include "http/config.html"
-;
-
-
 class H801_HTTP {
   private:
     ESP8266WebServer m_httpServer;
     ESP8266HTTPUpdateServer m_httpUpdater;
     H801_Config &m_config;
     PH801_Functions m_functions;
+    StaticJsonBuffer<1024> m_jsonBuffer;
+
+    bool send_File(const char* contentType, const char *fileName) {
+      Serial1.printf("send_File: %s\n", fileName);
+      
+      if (!SPIFFS.begin()) {
+        return false;
+      }
+
+      Serial1.printf("GET: %s\r\n", fileName);
+
+      // Check if exact match exists
+      if (SPIFFS.exists(fileName)) {
+        File file = SPIFFS.open(fileName, "r");
+        m_httpServer.sendHeader("Cache-Control", "max-age=86400");
+        m_httpServer.streamFile(file, contentType);
+        file.close();
+        SPIFFS.end();
+        return true;
+      }
+
+      // No file
+      SPIFFS.end();
+      m_httpServer.send(404, "text/plain", "FileNotFound");
+      return false;
+    }
 
 
     /**
      * HTTP GET root/index page
      */
-    void html_Index() {
-      m_httpServer.sendHeader("Cache-Control", "max-age=86400");
-      m_httpServer.send(200, "text/html", s_htmlIndex);
-    }
-
-    void html_Config() {
-      m_httpServer.sendHeader("Cache-Control", "max-age=86400");
-      m_httpServer.send(200, "text/html", s_htmlConfig);
-    }
-
-    void html_Stylesheet() {
-      m_httpServer.sendHeader("Cache-Control", "max-age=86400");
-      m_httpServer.send(200, "text/css", s_htmlStylesheet);
+    void send_Data(const char* type, const char *data) {
+      //m_httpServer.sendHeader("Cache-Control", "max-age=86400");
+      m_httpServer.send(200, type, data);
     }
 
 
@@ -43,19 +46,20 @@ class H801_HTTP {
      * HTTP POST status
      */
     void post_Status() {
-      StaticJsonBuffer<200> jsonBuffer;
+      m_jsonBuffer.clear();
       
       // Check if body received
       if (m_httpServer.hasArg("plain")== false) { 
-        m_httpServer.send(200, "application/json", "{ \"message\": \"Body not received\"}");
+        m_httpServer.send(406, "application/json", "{ \"message\": \"Body not received\"}");
         return;
       }
 
-      //Serial1.print("POST Input: ");
+      Serial1.print("POST Input: ");
       //Serial1.println(m_httpServer.arg("plain"));
 
+      m_jsonBuffer.clear();
       // Parse the json
-      JsonObject& json = jsonBuffer.parseObject(m_httpServer.arg("plain"));
+      JsonObject& json = m_jsonBuffer.parseObject(m_httpServer.arg("plain"));
 
       // Failed to parse json
       if (!json.success()) {
@@ -86,8 +90,8 @@ class H801_HTTP {
       }
 
 
-      StaticJsonBuffer<200> jsonBuffer;
-      JsonObject& json = jsonBuffer.createObject();
+      m_jsonBuffer.clear();
+      JsonObject& json = m_jsonBuffer.createObject();
 
       // Convert to JSON
       for (int i = 0; i < numArgs; i++) {
@@ -119,16 +123,16 @@ class H801_HTTP {
      * HTTP POST config
      */
     void post_Config() {
-      StaticJsonBuffer<200> jsonBuffer;
-      
       // Check if body received
       if (m_httpServer.hasArg("plain")== false) { 
-        m_httpServer.send(200, "application/json", "{ \"message\": \"Body not received\"}");
+        m_httpServer.send(406, "application/json", "{ \"message\": \"Body not received\"}");
         return;
       }
 
+      m_jsonBuffer.clear();
+
       // Parse the json
-      JsonObject& json = jsonBuffer.parseObject(m_httpServer.arg("plain"));
+      JsonObject& json = m_jsonBuffer.parseObject(m_httpServer.arg("plain"));
 
       // Failed to parse json
       if (!json.success()) {
@@ -155,9 +159,10 @@ class H801_HTTP {
 
 
   public:
-    H801_HTTP(H801_Config &config, PH801_Functions functions):m_config(config) {
-      m_httpServer  = ESP8266WebServer(80);
-      m_httpUpdater = ESP8266HTTPUpdateServer();
+    H801_HTTP(H801_Config &config, PH801_Functions functions):
+        m_config(config),
+        m_httpServer(80),
+        m_httpUpdater() {
 
       m_functions = functions;
     }
@@ -172,18 +177,26 @@ class H801_HTTP {
 
       m_httpUpdater.setup(&m_httpServer);
       
+
+      // Static contentent
       m_httpServer.on("/",           HTTP_GET, [&]() {
-        this->html_Index();
+        this->send_File("text/html", "/index.html");
       });
       m_httpServer.on("/index.html", HTTP_GET, [&]() {
-        this->html_Index();
+        this->send_File("text/html", "/index.html");
       });
-      m_httpServer.on("/config.html", HTTP_GET, [&]() {
-        this->html_Config();
+      m_httpServer.on("/iro.min.js", HTTP_GET, [&]() {
+        this->send_File("text/javascript", "/iro.min.js");
       });
-      m_httpServer.on("/stylesheet.css", HTTP_GET, [&]() {
-        this->html_Stylesheet();
+      m_httpServer.on("/bundle.js", HTTP_GET, [&]() {
+        this->send_File("text/javascript", "/bundle.js.gz");
       });
+      m_httpServer.on("/icons.woff", HTTP_GET, [&]() {
+        this->send_File("application/font-woff", "/icons.woff");
+      });
+
+
+      // Data content
       m_httpServer.on("/status", HTTP_GET,  [&]() {
         this->get_Status();
       });
