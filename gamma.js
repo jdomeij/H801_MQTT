@@ -3,7 +3,7 @@
  
 var   gamma   = 2.8;  // Correction factor
 var   max_in  = 1023, // Top end of INPUT range
-      max_out = 1000;  // Top end of OUTPUT range
+      max_out = 1023;  // Top end of OUTPUT range
  
 //process.stdout.write("static const uint16_t s_gammaTable[] = {");
 for (var i=0; i<=max_in; i++) {

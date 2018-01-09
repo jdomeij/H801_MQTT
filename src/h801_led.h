@@ -2,7 +2,11 @@
 // Led gamma table
 // https://learn.adafruit.com/led-tricks-gamma-correction/the-longer-fix
 static const uint16_t s_gammaTable[] = {
-#include "gammatable.inc"
+#ifdef NEW_PWM
+# include "gammatable_new_pwm.inc"
+#else
+# include "gammatable.inc"
+#endif  
 };
 
 // Ensure gammatable is correct length
@@ -15,6 +19,7 @@ class H801_Led {
 private:
   String   m_id;
   uint16_t m_bri;
+  uint16_t m_currBri;
 
   double    m_fadeBri;
   double    m_fadeStep;
@@ -41,13 +46,16 @@ public:
       m_id(id),
       m_pwm_index(pwm_index),
       m_bri(0),
+      m_currBri(0),
       m_fadeBri(0),
       m_fadeStep(0),
       m_fadeNum(0) {
-    pinMode(pin_num, OUTPUT);
-    digitalWrite(pin_num, 0);
+    pinMode(m_pwm_pin.num, OUTPUT);
+    digitalWrite(m_pwm_pin.num, 0);
   }
 
+
+#ifdef NEW_PWM
   /**
    * Get pwm io information
    * @param pwm_io_info  Destionation to copy information
@@ -57,6 +65,8 @@ public:
     pwm_io_info[1] = m_pwm_pin.func;
     pwm_io_info[2] = m_pwm_pin.num;
   }
+#endif
+
 
   /**
    * Setup led
@@ -127,7 +137,19 @@ public:
     // No duration update pwm directly
     if (!fadeSteps) {
       m_bri = (bri<<2 | 0x3) & 0x3FF;
-      pwm_set_duty(s_gammaTable[m_bri], m_pwm_index);
+
+      // Only update on change
+      if (m_bri != m_currBri) {
+#if NEW_PWM
+        pwm_set_duty(s_gammaTable[m_bri], m_pwm_index);
+#else
+        analogWrite(m_pwm_pin.num, s_gammaTable[m_bri]);
+#endif
+      }
+
+      // Update current brightness
+      m_currBri = m_bri;
+
       return true;
     }
 
@@ -165,9 +187,17 @@ public:
     // Convert to 10-bit number
     m_bri = ((int)(m_fadeBri)) & 0x3FF;
 
-    // Update light
-    pwm_set_duty(s_gammaTable[m_bri], m_pwm_index);
-    //analogWrite(m_pin, s_gammaTable[m_bri]);
+    // Only update on change
+    if (m_bri != m_currBri) {
+#if NEW_PWM
+      pwm_set_duty(s_gammaTable[m_bri], m_pwm_index);
+#else
+      analogWrite(m_pwm_pin.num, s_gammaTable[m_bri]);
+#endif
+    }
+    
+    // Update current brightness
+    m_currBri = m_bri;
     
     // Last fade event, clear values
     if (!m_fadeNum) {
@@ -199,11 +229,30 @@ public:
     
     m_bri = constrain(newBri, 0x0, 0x3FF);
 
-    // Update light
-    pwm_set_duty(s_gammaTable[m_bri], m_pwm_index);
+    // Only update if light has changed
+    if (m_bri != m_currBri) {
+#ifdef NEW_PWM
+      // Update light
+      pwm_set_duty(s_gammaTable[m_bri], m_pwm_index);
+#else 
+      analogWrite(m_pwm_pin.num, s_gammaTable[m_bri]);
+#endif
+    }
+
+    // Update current brightness
+    m_currBri = m_bri; 
 
     // Have we reached the endpoints
     return m_bri != (dirUp ? 0x3FF : 0x0);
   }
+
+/*
+  void appendInfo(JsonObject& root) {
+    JsonObject& json = root.createNestedObject(m_id);
+    
+    json["bri"] = m_bri;
+    json["pwm"] = pwm_get_duty(m_pwm_index);
+  }
+*/
 };
 

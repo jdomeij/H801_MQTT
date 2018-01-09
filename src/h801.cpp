@@ -14,9 +14,11 @@
 #include <ESP8266WebServer.h>
 #include <ESP8266mDNS.h>
 
+#ifdef NEW_PWM
 extern "C"{
   #include "pwm.h"
 }
+#endif//NEW_PWM
 
 // countof
 template <typename T, std::size_t N>
@@ -25,6 +27,34 @@ constexpr std::size_t countof(T const (&)[N]) noexcept {
 }
 
 
+#ifndef HWMODEL
+# error Missing HWMODEL define
+#endif 
+
+#define HWMODEL_H801        1
+#define HWMODEL_MAGIC_RGB   2
+#define HWMODEL_MAGIC_RGBW  3
+
+
+const char* getHWModelName() {
+  static const char *modelName = NULL;
+
+  if (modelName != NULL)
+    return modelName;
+
+// Check model type
+#if   HWMODEL==HWMODEL_H801
+  modelName = "H801";
+#elif HWMODEL==HWMODEL_MAGIC_RGB
+  modelName = "Magic RGB";
+#elif HWMODEL==HWMODEL_MAGIC_RGBW
+  modelName = "Magic RGBW";
+#else
+# error Unknown HWMODEL 
+#endif
+
+  return modelName;
+}
 
 // Forward declaration
 bool stringToUnsignedLong(const char *psz, unsigned long *dest);
@@ -46,6 +76,9 @@ const char *funcGetConfig(void);
 void funcResetConfig(void);
 void funcResetConfirmTimeout(void);
 
+// Get Info
+const char *funcGetInfo(void);
+
 
 typedef const char* (*H801_FunctionSet)(const char *eventSource, JsonObject& json);
 typedef const char* (*H801_FunctionGet)(void);
@@ -61,6 +94,9 @@ typedef struct tagH801_Functions {
 
   void (*reset_Config)(void);
 
+  // Information
+  H801_FunctionGet get_Info;
+
 } H801_Functions, *PH801_Functions;
 
 
@@ -73,6 +109,8 @@ H801_Functions callbackFunctions = {
   .get_Config = funcGetConfig,
 
   .reset_Config = funcResetConfirmTimeout,
+
+  .get_Info = funcGetInfo,
 };
 
 
@@ -101,14 +139,54 @@ static WiFiClient s_wifiClient;
 static H801_MQTT s_mqttClient(s_wifiClient, s_config, &callbackFunctions);
 static H801_HTTP s_httpServer(              s_config, &callbackFunctions);
 
-// List of all LEDs
-H801_Led LedStatus[] = {
-  H801_Led("R",   0, PERIPHS_IO_MUX_MTDO_U,  FUNC_GPIO15, 15),
-  H801_Led("G",   1, PERIPHS_IO_MUX_MTCK_U,  FUNC_GPIO13, 13),
-  H801_Led("B",   2, PERIPHS_IO_MUX_MTDI_U,  FUNC_GPIO12, 12),
-  H801_Led("W1",  3, PERIPHS_IO_MUX_MTMS_U,  FUNC_GPIO14, 14),
-  H801_Led("W2",  4, PERIPHS_IO_MUX_GPIO4_U, FUNC_GPIO4,   4)
+uint32_t H801_PWM_GPIO_Mux_Table[] = {
+  PERIPHS_IO_MUX_GPIO0_U, // GPIO0
+  PERIPHS_IO_MUX_U0TXD_U, // GPIO1
+  PERIPHS_IO_MUX_GPIO2_U, // GPIO2
+  PERIPHS_IO_MUX_U0RXD_U, // GPIO3
+  PERIPHS_IO_MUX_GPIO4_U, // GPIO4
+  PERIPHS_IO_MUX_GPIO5_U, // GPIO5
+  PERIPHS_IO_MUX_SD_CLK_U, // GPIO6
+  PERIPHS_IO_MUX_SD_DATA0_U, // GPIO7
+  PERIPHS_IO_MUX_SD_DATA1_U, // GPIO8
+  PERIPHS_IO_MUX_SD_DATA2_U, // GPIO9
+  PERIPHS_IO_MUX_SD_DATA3_U, // GPIO10
+  PERIPHS_IO_MUX_SD_CMD_U, // GPIO11
+  PERIPHS_IO_MUX_MTDI_U, // GPIO12
+  PERIPHS_IO_MUX_MTCK_U, // GPIO13
+  PERIPHS_IO_MUX_MTMS_U, // GPIO14
+  PERIPHS_IO_MUX_MTDO_U, // GPIO15
 };
+
+#define H801_PWM_GPIO(_num_) H801_PWM_GPIO_Mux_Table[_num_], FUNC_GPIO ##_num_, _num_
+
+#if HWMODEL==HWMODEL_MAGIC_RGBW
+// Magic RGBW led configuration
+H801_Led LedStatus[] = {
+  H801_Led("R",   0, H801_PWM_GPIO(5)),
+  H801_Led("G",   1, H801_PWM_GPIO(14)),
+  H801_Led("B",   2, H801_PWM_GPIO(12)),
+  H801_Led("W",   3, H801_PWM_GPIO(13)),
+};
+
+#elif HWMODEL==HWMODEL_MAGIC_RGB
+// Magic RGB led configuration
+H801_Led LedStatus[] = {
+  H801_Led("R",   0, H801_PWM_GPIO(5)),
+  H801_Led("G",   1, H801_PWM_GPIO(14)),
+  H801_Led("B",   2, H801_PWM_GPIO(12)),
+};
+
+#elif HWMODEL==HWMODEL_H801
+// H801 led configuration
+H801_Led LedStatus[] = {
+  H801_Led("R",   0, H801_PWM_GPIO(15)),
+  H801_Led("G",   1, H801_PWM_GPIO(13)),
+  H801_Led("B",   2, H801_PWM_GPIO(12)),
+  H801_Led("W1",  3, H801_PWM_GPIO(14)),
+  H801_Led("W2",  4, H801_PWM_GPIO(4)),
+};
+#endif
 
 // Array with all leds to fade on button press
 H801_Led* LedButtonFade[countof(LedStatus)] = {0};
@@ -126,6 +204,7 @@ void setup() {
   pinMode(H801_LED_PIN_R, OUTPUT);
   pinMode(H801_LED_PIN_G, OUTPUT);
 
+#ifdef NEW_PWM
   // PWM resolution, take max value of gamma table 1000
   const uint32_t h801_pwm_period = s_gammaTable[countof(s_gammaTable) - 1]; // * 200ns ^= 200 Mhz
 
@@ -141,12 +220,14 @@ void setup() {
   // Init pwm and start it
   pwm_init(h801_pwm_period, h801_pwm_initval, countof(LedStatus), h801_pwm_io_info);
   pwm_start();
+#endif//NEW_PWM
 
 
+#if HWMODEL == HWMODEL_H801
   // red: off, green: on
   digitalWrite(H801_LED_PIN_R, 1);
   digitalWrite(H801_LED_PIN_G, 1);
-
+#endif // HWMODEL
   // GPIO0 as input
   pinMode(H801_GPIO_PIN0, INPUT);
 
@@ -198,8 +279,12 @@ void setup() {
   LedButtonFade[0] = s_config.m_ButtonFade.R ? &LedStatus[0] : NULL;
   LedButtonFade[1] = s_config.m_ButtonFade.G ? &LedStatus[1] : NULL;
   LedButtonFade[2] = s_config.m_ButtonFade.B ? &LedStatus[2] : NULL;
+#if HWMODEL==HWMODEL_H801
   LedButtonFade[3] = s_config.m_ButtonFade.W1 ? &LedStatus[3] : NULL;
   LedButtonFade[4] = s_config.m_ButtonFade.W2 ? &LedStatus[4] : NULL;
+#elif HWMODEL==HWMODEL_MAGIC_RGBW
+  LedButtonFade[3] = s_config.m_ButtonFade.W ? &LedStatus[3] : NULL;
+#endif
 
   // Green light on
   digitalWrite(H801_LED_PIN_G, false);
@@ -301,7 +386,9 @@ void loop() {
           if (led)
             s_isFading = led->do_ButtonFade(buttonFadeDirUp) || s_isFading;
         }
+#ifdef NEW_PWM
         pwm_start();
+#endif//NEW_PWM
       }
       else {
         digitalWrite(H801_LED_PIN_G, false);
@@ -324,7 +411,9 @@ void loop() {
     // Blink leds during fading, ensure led is green when done
     fadingLedIndex++;
     if (s_isFading) {
+#ifdef NEW_PWM
       pwm_start();
+#endif//NEW_PWM
       digitalWrite(H801_LED_PIN_G, (fadingLedIndex & 0x7) != 0x00);
       //digitalWrite(H801_LED_PIN_R, (fadingLedIndex&(0x04)) != );
     }
@@ -581,14 +670,74 @@ const char * statusToJSONString(const char *eventSource, unsigned long fadeTime)
  * @return hostname
  */
 const char* getHostname(void) {
-  static char hostname[32];
+  static char hostname[128];
   if (*hostname)
     return hostname;
 
   // Generate hostname
-  snprintf(hostname, countof(hostname), "H801 %08X", ESP.getChipId());
+  snprintf(hostname, countof(hostname), "%s %08X", getHWModelName(), ESP.getChipId());
   hostname[countof(hostname)-1] = '\0';
   return hostname;
+}
+
+
+/**
+ * Retreives current LED status
+ * @return JSON string with current status
+ */
+const char *funcGetInfo(void) {
+  static char buffer[1024];
+  static StaticJsonBuffer<1024> jsonBuffer;
+
+  jsonBuffer.clear();
+  JsonObject& root = jsonBuffer.createObject();
+
+  // Global info
+  if (*s_config.m_name)
+    root["name"] = s_config.m_name;
+  else
+    root["name"] = getHostname();
+  root["model"] = getHWModelName();
+
+  // WiFi
+  JsonObject& jsonWiFi = root.createNestedObject("wifi");
+  jsonWiFi["ip"]      = WiFi.localIP().toString();
+  jsonWiFi["subnet"]  = WiFi.subnetMask().toString();
+  jsonWiFi["gateway"] = WiFi.gatewayIP().toString();
+  jsonWiFi["mac"]     = WiFi.macAddress();
+  jsonWiFi["ssid"]    = WiFi.SSID();
+
+  // System
+  JsonObject& jsonSystem = root.createNestedObject("system");
+  jsonSystem["chip_id"] = ESP.getChipId();
+  jsonSystem["sdk_version"] = ESP.getSdkVersion();
+  
+  jsonSystem["chip_size"] = ESP.getFlashChipSize();
+  jsonSystem["chip_real_size"] = ESP.getFlashChipRealSize();
+
+  // SPIFFS
+  if (SPIFFS.begin()) {
+    JsonObject& jsonSPIFFS = root.createNestedObject("spiffs");
+
+    FSInfo fs_info;
+    if (SPIFFS.info(fs_info)) {
+      jsonSPIFFS["used"] = fs_info.usedBytes;
+      jsonSPIFFS["free"] = (fs_info.totalBytes - fs_info.usedBytes);
+    }
+    SPIFFS.end();
+  }
+
+  s_mqttClient.appendInfo(root);
+
+/*
+  for (H801_Led& led : LedStatus) {
+    led.appendInfo(root);
+  }
+*/
+  // Serialize JSON
+  root.printTo(buffer, sizeof(buffer));
+
+  return buffer;
 }
 
 
@@ -636,7 +785,9 @@ const char *funcSetStatus(const char* eventSource, JsonObject& json) {
   // Update light from json string
   if (jsonToLight(json, fadeTime)) {
     s_isFading = true;
+#ifdef NEW_PWM
     pwm_start();
+#endif//NEW_PWM
   }
 
   // Get current config
@@ -682,9 +833,14 @@ const char *funcSetConfig(const char* eventSource, JsonObject& json) {
     LedButtonFade[0] = s_config.m_ButtonFade.R ? &LedStatus[0] : NULL;
     LedButtonFade[1] = s_config.m_ButtonFade.G ? &LedStatus[1] : NULL;
     LedButtonFade[2] = s_config.m_ButtonFade.B ? &LedStatus[2] : NULL;
+
+#if HWMODEL==HWMODEL_H801
     LedButtonFade[3] = s_config.m_ButtonFade.W1 ? &LedStatus[3] : NULL;
     LedButtonFade[4] = s_config.m_ButtonFade.W2 ? &LedStatus[4] : NULL;
-    
+#elif HWMODEL==HWMODEL_MAGIC_RGBW
+    LedButtonFade[3] = s_config.m_ButtonFade.W ? &LedStatus[3] : NULL;
+#endif
+
     // Re-setup mqtt client with new info
     s_mqttClient.setup();
   }
@@ -703,8 +859,6 @@ const char *funcSetConfig(const char* eventSource, JsonObject& json) {
  */
 void funcResetConfirmTimeout() {
   static unsigned long lastRequest = 0;
-
-
 
   // First time called, snapshot
   if (!lastRequest) {

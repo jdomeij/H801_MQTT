@@ -10,6 +10,8 @@ class H801_Config {
   public:
     StaticJsonBuffer<1024> m_jsonBuffer;
 
+    char m_name[128];
+
     // MQTT config
     struct {
       char server[128];
@@ -25,8 +27,15 @@ class H801_Config {
       bool R;
       bool G;
       bool B;
+#if HWMODEL==HWMODEL_H801
       bool W1;
       bool W2;
+#elif HWMODEL==HWMODEL_MAGIC_RGBW
+      bool W;
+#elif HWMODEL==HWMODEL_MAGIC_RGB
+#else
+# error Unknown model
+#endif
     } m_ButtonFade;
 
   private:
@@ -155,13 +164,18 @@ class H801_Config {
      * Reset configuration
      */
     void clear(void) {
+      *m_name = '\0';
       memset(&m_MQTT, 0, sizeof(m_MQTT));
 
       m_ButtonFade.R = true;
       m_ButtonFade.G = true;
       m_ButtonFade.B = true;
+#if HWMODEL==HWMODEL_H801
       m_ButtonFade.W1 = true;
       m_ButtonFade.W2 = true;
+#elif HWMODEL==HWMODEL_MAGIC_RGBW
+      m_ButtonFade.W = true;
+#endif
     }
 
 
@@ -176,30 +190,37 @@ class H801_Config {
       m_jsonBuffer.clear();
       JsonObject& json = m_jsonBuffer.createObject();
 
-      json["mqtt_server"] = m_MQTT.server;
-      json["mqtt_port"]   = m_MQTT.port;
+      json["name"] = m_name;
 
-      json["mqtt_alias"]  = m_MQTT.alias;
+      // MQTT
+      JsonObject& jsonMQTT = json.createNestedObject("mqtt");
+      jsonMQTT["server"] = m_MQTT.server;
+      jsonMQTT["port"]   = m_MQTT.port;
 
-      json["mqtt_login"]  = m_MQTT.login;
+      jsonMQTT["alias"]  = m_MQTT.alias;
+
+      jsonMQTT["login"]  = m_MQTT.login;
       
       // Output empty string if password is empty
       if (!hidePassword || !*m_MQTT.passw) {
-        json["mqtt_passw"]  = m_MQTT.passw;
+        jsonMQTT["passw"]  = m_MQTT.passw;
       }
       else {
-        json["mqtt_passw"]  = "*********";
+        jsonMQTT["passw"]  = "*********";
       }
 
 
       // Button fading
-      JsonObject& buttonFade = json.createNestedObject("button_fade");
-      buttonFade["R"]  = m_ButtonFade.R;
-      buttonFade["G"]  = m_ButtonFade.G;
-      buttonFade["B"]  = m_ButtonFade.B;
-      buttonFade["W1"] = m_ButtonFade.W1;
-      buttonFade["W2"] = m_ButtonFade.W2;
-
+      JsonObject& jsonButtonFade = json.createNestedObject("button_fade");
+      jsonButtonFade["R"]  = m_ButtonFade.R;
+      jsonButtonFade["G"]  = m_ButtonFade.G;
+      jsonButtonFade["B"]  = m_ButtonFade.B;
+#if HWMODEL==HWMODEL_H801
+      jsonButtonFade["W1"] = m_ButtonFade.W1;
+      jsonButtonFade["W2"] = m_ButtonFade.W2;
+#elif HWMODEL==HWMODEL_MAGIC_RGBW
+      jsonButtonFade["W"]  = m_ButtonFade.W;
+#endif
       // Serialize JSON
       json.printTo(buffer, sizeof(buffer));
       return buffer;
@@ -215,20 +236,28 @@ class H801_Config {
 
     bool isModified = false;
 
-    isModified = jsonToStringProp(json["mqtt_server"], m_MQTT.server,  countof(m_MQTT.server)) || isModified;
-    isModified = jsonToStringProp(json["mqtt_port"],   m_MQTT.port,    countof(m_MQTT.port))   || isModified;
-    isModified = jsonToStringProp(json["mqtt_alias"],  m_MQTT.alias,   countof(m_MQTT.alias))  || isModified;
-    isModified = jsonToStringProp(json["mqtt_login"],  m_MQTT.login,   countof(m_MQTT.login))  || isModified;
-    isModified = jsonToStringProp(json["mqtt_passw"],  m_MQTT.passw,   countof(m_MQTT.passw))  || isModified;
+    isModified = jsonToStringProp(json["name"], m_name,  countof(m_name)) || isModified;
 
+    JsonObject& jsonMQTT = json["mqtt"];
+    if (jsonMQTT.success()) {
+      isModified = jsonToStringProp(jsonMQTT["server"], m_MQTT.server,  countof(m_MQTT.server)) || isModified;
+      isModified = jsonToStringProp(jsonMQTT["port"],   m_MQTT.port,    countof(m_MQTT.port))   || isModified;
+      isModified = jsonToStringProp(jsonMQTT["alias"],  m_MQTT.alias,   countof(m_MQTT.alias))  || isModified;
+      isModified = jsonToStringProp(jsonMQTT["login"],  m_MQTT.login,   countof(m_MQTT.login))  || isModified;
+      isModified = jsonToStringProp(jsonMQTT["passw"],  m_MQTT.passw,   countof(m_MQTT.passw))  || isModified;
+    }
 
-    JsonObject& buttonFade = json["button_fade"];
-    if (buttonFade.success()) {
-      isModified = jsonToBoolProp(buttonFade["R"],  &m_ButtonFade.R)  || isModified;
-      isModified = jsonToBoolProp(buttonFade["G"],  &m_ButtonFade.G)  || isModified;
-      isModified = jsonToBoolProp(buttonFade["B"],  &m_ButtonFade.B)  || isModified;
-      isModified = jsonToBoolProp(buttonFade["W1"], &m_ButtonFade.W1) || isModified;
-      isModified = jsonToBoolProp(buttonFade["W2"], &m_ButtonFade.W2) || isModified;
+    JsonObject& jsonButtonFade = json["button_fade"];
+    if (jsonButtonFade.success()) {
+      isModified = jsonToBoolProp(jsonButtonFade["R"],  &m_ButtonFade.R)  || isModified;
+      isModified = jsonToBoolProp(jsonButtonFade["G"],  &m_ButtonFade.G)  || isModified;
+      isModified = jsonToBoolProp(jsonButtonFade["B"],  &m_ButtonFade.B)  || isModified;
+#if HWMODEL==HWMODEL_H801
+      isModified = jsonToBoolProp(jsonButtonFade["W1"], &m_ButtonFade.W1) || isModified;
+      isModified = jsonToBoolProp(jsonButtonFade["W2"], &m_ButtonFade.W2) || isModified;
+#elif HWMODEL==HWMODEL_MAGIC_RGBW
+      isModified = jsonToBoolProp(jsonButtonFade["W"], &m_ButtonFade.W) || isModified;
+#endif
     }
     return isModified;
   }

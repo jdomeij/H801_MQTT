@@ -343,4 +343,19 @@ class H801_MQTT {
           m_mqttClient.publish(m_topicPing, buffer, false);
       }
     }
+
+    void appendInfo(JsonObject& root) {
+      if (!m_validConfig)
+        return;
+
+      JsonObject& jsonMQTT = root.createNestedObject("mqtt");
+      
+      if (m_mqttClient.connected()) {
+        jsonMQTT["connected"] = true;  
+      }
+      else {
+        jsonMQTT["connected"] = false;  
+        jsonMQTT["state"] = this->getConnectStateInfo(m_mqttClient.state());
+      }
+    }
 };

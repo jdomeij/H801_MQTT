@@ -112,6 +112,14 @@ class H801_HTTP {
 
 
     /**
+     * HTTP GET info
+     */
+    void get_Info() {
+      m_httpServer.send(200, "application/json", m_functions->get_Info());
+    }
+
+
+    /**
      * HTTP GET config
      */
     void get_Config() {
@@ -203,6 +211,7 @@ class H801_HTTP {
       m_httpServer.on("/status", HTTP_POST, [&]() {
         this->post_Status();
       });
+
       m_httpServer.on("/config", HTTP_GET, [&]() {
         this->get_Config();
       });      
@@ -212,6 +221,11 @@ class H801_HTTP {
       m_httpServer.on("/config", HTTP_DELETE, [&]() {
         this->delete_Config();
       });
+
+      m_httpServer.on("/info", HTTP_GET, [&]() {
+        this->get_Info();
+      });      
+
 
       m_httpServer.begin();
 
