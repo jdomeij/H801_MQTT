@@ -193,6 +193,9 @@ class H801_HTTP {
       m_httpServer.on("/index.html", HTTP_GET, [&]() {
         this->send_File("text/html", "/index.html");
       });
+      m_httpServer.on("/favicon.gif", HTTP_GET, [&]() {
+        this->send_File("image/gif", "favicon.gif");
+      });
       m_httpServer.on("/iro.min.js", HTTP_GET, [&]() {
         this->send_File("text/javascript", "/iro.min.js");
       });
